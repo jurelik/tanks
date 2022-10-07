@@ -67,7 +67,10 @@ typedef struct {
 enum client_packet_type {
   CLIENT_POSITION_FLAG,
   CLIENT_STATE_FLAG
-}
+};
+
+/* FUNCTION DEFINITIONS */
+int createPlayer(Player *player, int posX, int posY);
 
 App app = {0};
 
@@ -125,10 +128,12 @@ void client_send_position() {
   // Create memory block containing the local app state
   int sizeof_data = sizeof(uint8_t) + 2 * sizeof(uint16_t);
   uint8_t *data = malloc(sizeof_data);
+  uint16_t posX = (uint16_t)app.localPlayer.posX;
+  uint16_t posY = (uint16_t)app.localPlayer.posY;
 
   data[0] = CLIENT_POSITION_FLAG;
-  data[1] = (uint16_t)app.localPlayer.posX;
-  data[3] = (uint16_t)app.localPlayer.posY;
+  memcpy(&data[1], &posX, sizeof(uint16_t));
+  memcpy(&data[3], &posY, sizeof(uint16_t));
 
   ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
   enet_peer_send(app.peer, 0, packet);
@@ -147,6 +152,8 @@ int connect_to_host() {
 
   if (enet_host_service(app.client, &app.event, 5000) > 0 && app.event.type == ENET_EVENT_TYPE_CONNECT) {
     printf("Successfully connected to host.\n");
+
+    client_send_position(); //Send initial position to server
     return 0;
   }
   else {
@@ -183,10 +190,15 @@ void pollEnetServer() {
       case ENET_EVENT_TYPE_RECEIVE:
         printf("A packet of length %lu containing %s was received on channel %u.\n", app.event.packet->dataLength, app.event.packet->data, app.event.channelID);
 
-        uint8_t *values = (uint8_t *)app.event.packet->data;
+        uint8_t *data = (uint8_t *)app.event.packet->data;
 
-        if (values[0] == CLIENT_POSITION_FLAG) {
-          if (createPlayer(&app.players[0]) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+        if (data[0] == CLIENT_POSITION_FLAG) {
+          uint16_t posX;
+          uint16_t posY;
+          memcpy(&posX, &data[1], sizeof(uint16_t));
+          memcpy(&posY, &data[3], sizeof(uint16_t));
+
+          if (createPlayer(&app.players[0], posX, posY) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
         }
         /*
         if (values[0]) { app.up = 1; } else { app.up = 0; }
@@ -236,15 +248,16 @@ void sendEnetServer() {
 
 void sendEnetClient() {
   // Create memory block containing the local app state
-  int sizeof_data = 6 * sizeof(uint8_t);
+  int sizeof_data = 7 * sizeof(uint8_t);
   uint8_t *data = malloc(sizeof_data);
 
-  data[0] = app.up;
-  data[1] = app.down;
-  data[2] = app.left;
-  data[3] = app.right;
-  data[4] = app.buttonA;
-  data[5] = app.buttonB;
+  data[0] = CLIENT_STATE_FLAG;
+  data[1] = app.up;
+  data[2] = app.down;
+  data[3] = app.left;
+  data[4] = app.right;
+  data[5] = app.buttonA;
+  data[6] = app.buttonB;
 
   ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_peer_send(app.peer, 0, packet);
@@ -342,13 +355,15 @@ void blit(SDL_Texture *texture, int x, int y, int angle) {
 }
 
 /* Player logic */
-int createPlayer(Player *player) {
+int createPlayer(Player *player, int posX, int posY) {
   srand(time(NULL)); //Seed the random generator
+  if (!posX) posX = rand() % 631 + 10;
+  if (!posY) posY = rand() % 471 + 10;
 
   //Create player
   memset(player, 0, sizeof(Player));
-  player->posX = rand() % 631 + 10;
-  player->posY = rand() % 471 + 10;
+  player->posX = posX;
+  player->posY = posY;
   player->angle = 0;
   player->bullet_queue.size = 0;
 
@@ -446,7 +461,7 @@ void drawBullets(Player *player) {
 
 /* Game loop logic */
 int load() {
-  if (createPlayer(&app.localPlayer) == EXIT_FAILURE) { return EXIT_FAILURE; }
+  if (createPlayer(&app.localPlayer, 0, 0) == EXIT_FAILURE) { return EXIT_FAILURE; }
 
   return 0;
 }
