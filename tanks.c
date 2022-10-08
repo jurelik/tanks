@@ -142,26 +142,6 @@ int init_client() {
   return 0;
 }
 
-/*
-void client_send_position() {
-  // Create memory block containing the local app state
-  int sizeof_data = sizeof(uint8_t) + 2 * sizeof(uint16_t);
-  uint8_t *data = malloc(sizeof_data);
-  uint16_t posX = (uint16_t)app.localPlayer.posX;
-  uint16_t posY = (uint16_t)app.localPlayer.posY;
-
-  data[0] = CLIENT_POSITION_FLAG;
-  memcpy(&data[1], &posX, sizeof(uint16_t));
-  memcpy(&data[3], &posY, sizeof(uint16_t));
-
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
-  enet_peer_send(app.peer, 0, packet);
-
-  // Cleanup
-  free(data);
-}
-*/
-
 void host_send_position(ENetPeer *peer) {
   // Create memory block containing the player positions
   int sizeof_data = 2 * sizeof(uint8_t) + app.number_of_players * 2 * sizeof(uint16_t);
@@ -263,6 +243,7 @@ void pollEnetServer() {
           if (data[3]) { app.players[*player_ID].angle -= PLAYER_ROTATION_SPEED; };
           if (data[4]) { app.players[*player_ID].angle += PLAYER_ROTATION_SPEED; };
           if (data[5] && !app.players[*player_ID].buttonAIsDown) { shootBullet(&app.players[*player_ID]); app.players[*player_ID].buttonAIsDown = 1; };
+          if (!data[5] && app.players[*player_ID].buttonAIsDown) { app.players[*player_ID].buttonAIsDown = 0; };
         }
 
         break;
@@ -288,7 +269,6 @@ void pollEnetClient() {
 
         if (data[0] == HOST_POSITION_FLAG) {
           uint8_t number_of_players = data[1];
-          printf("nop: %d\n", number_of_players);
           int position_index = 2;
 
           //Create players
@@ -478,7 +458,6 @@ void movePlayerBackward(Player *player) {
 
 /* Bullet logic */
 int bullet_queue_is_full(Bullet_queue *bullet_queue) {
-  printf("%d\n", bullet_queue->size == BULLET_AMOUNT);
   return bullet_queue->size == BULLET_AMOUNT;
 }
 
@@ -560,7 +539,9 @@ void update() {
   if (app.right) { app.localPlayer->angle += PLAYER_ROTATION_SPEED; };
   if (app.buttonA && !app.buttonAIsDown) { shootBullet(app.localPlayer); app.buttonAIsDown = 1; };
 
-  updateBulletPositions(app.localPlayer);
+  for (uint8_t i = 0; i < app.number_of_players; i++) {
+    updateBulletPositions(&app.players[i]);
+  }
 }
 
 void draw() {
@@ -571,8 +552,6 @@ void draw() {
   SDL_RenderClear(app.renderer);
 
   for (int i = 0; i < app.number_of_players; i++) {
-    //printf("Player %d: posX = %f\n", i, app.players[i].posX);
-    //printf("Player %d: posY = %f\n", i, app.players[i].posY);
     drawPlayer(&app.players[i]); //Draw player
     drawBullets(&app.players[i]); //Draw bullets
   }
