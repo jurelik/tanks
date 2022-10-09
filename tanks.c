@@ -19,8 +19,8 @@
 
 /* TYPES */
 typedef struct {
-  float posX;
-  float posY;
+  float pos_x;
+  float pos_y;
   int angle;
   int bounces;
 } Bullet;
@@ -34,12 +34,12 @@ typedef struct {
 
 typedef struct {
   uint8_t id;
-  float posX;
-  float posY;
-  int angle;
+  float pos_x;
+  float pos_y;
+  int16_t angle;
   SDL_Texture *texture;
   Bullet_queue bullet_queue;
-  int activeBullets;
+  uint8_t active_bullets;
   uint8_t up;
   uint8_t down;
   uint8_t left;
@@ -75,7 +75,6 @@ typedef struct {
 
 /* ENUMS */
 enum client_packet_type {
-  CLIENT_POSITION_FLAG,
   CLIENT_STATE_FLAG
 };
 
@@ -85,7 +84,7 @@ enum host_packet_type {
 };
 
 /* FUNCTION DEFINITIONS */
-int createPlayer(Player *player, int posX, int posY);
+int createPlayer(Player *player, int pos_x, int pos_y);
 void movePlayerForward(Player *player);
 void movePlayerBackward(Player *player);
 void shootBullet(Player *player);
@@ -152,12 +151,12 @@ void host_send_position(ENetPeer *peer) {
   int position_index = 2;
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
-    uint16_t posX = (uint16_t)app.players[i].posX;
-    uint16_t posY = (uint16_t)app.players[i].posY;
+    uint16_t pos_x = (uint16_t)app.players[i].pos_x;
+    uint16_t pos_y = (uint16_t)app.players[i].pos_y;
 
-    memcpy(&data[position_index], &posX, sizeof(uint16_t));
+    memcpy(&data[position_index], &pos_x, sizeof(uint16_t));
     position_index += 2;
-    memcpy(&data[position_index], &posY, sizeof(uint16_t));
+    memcpy(&data[position_index], &pos_y, sizeof(uint16_t));
     position_index += 2;
   }
 
@@ -224,19 +223,9 @@ void pollEnetServer() {
 
         break;
       case ENET_EVENT_TYPE_RECEIVE:
-        // printf("A packet of length %lu containing %s was received on channel %u.\n", app.event.packet->dataLength, app.event.packet->data, app.event.channelID);
-
         uint8_t *data = (uint8_t *)app.event.packet->data;
 
-        if (data[0] == CLIENT_POSITION_FLAG) {
-          uint16_t posX;
-          uint16_t posY;
-          memcpy(&posX, &data[1], sizeof(uint16_t));
-          memcpy(&posY, &data[3], sizeof(uint16_t));
-
-          if (createPlayer(&app.players[0], posX, posY) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-        }
-        else if (data[0] == CLIENT_STATE_FLAG) {
+        if (data[0] == CLIENT_STATE_FLAG) {
           uint8_t *player_ID = (uint8_t *)app.event.peer->data;
           if (data[1]) { movePlayerForward(&app.players[*player_ID]); };
           if (data[2]) { movePlayerBackward(&app.players[*player_ID]); };
@@ -264,26 +253,45 @@ void pollEnetClient() {
         printf("New client connected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
         break;
       case ENET_EVENT_TYPE_RECEIVE:
-        printf("A packet of length %lu containing %s was received on channel %u.\n", app.event.packet->dataLength, app.event.packet->data, app.event.channelID);
         uint8_t *data = (uint8_t *)app.event.packet->data;
 
         if (data[0] == HOST_POSITION_FLAG) {
           uint8_t number_of_players = data[1];
-          int position_index = 2;
+          int data_index = 2;
 
           //Create players
           for (uint8_t i = 0; i < number_of_players; i++) {
-            uint16_t posX;
-            uint16_t posY;
-            memcpy(&posX, &data[position_index], sizeof(uint16_t));
-            position_index += 2;
-            memcpy(&posY, &data[position_index], sizeof(uint16_t));
-            position_index += 2;
+            uint16_t pos_x;
+            uint16_t pos_y;
+            memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+            data_index += 2;
+            memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+            data_index += 2;
 
-            if (createPlayer(&app.players[app.number_of_players], posX, posY) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+            if (createPlayer(&app.players[app.number_of_players], pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
           }
 
           app.localPlayer = &app.players[app.number_of_players - 1]; //Last player in app.players is localPlayer
+        }
+        else if (data[0] == HOST_STATE_FLAG) {
+          int data_index = 1;
+
+          for (uint8_t i = 0; i < app.number_of_players; i++) {
+            //Update player positions
+            uint16_t pos_x;
+            uint16_t pos_y;
+            int16_t angle;
+            memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+            data_index += 2;
+            memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+            data_index += 2;
+            memcpy(&angle, &data[data_index], sizeof(uint16_t));
+            data_index += 2;
+
+            app.players[i].pos_x = pos_x;
+            app.players[i].pos_y = pos_y;
+            app.players[i].angle = angle;
+          }
         }
         break;
       case ENET_EVENT_TYPE_DISCONNECT:
@@ -300,11 +308,35 @@ void pollEnet() {
   else if (app.client) { pollEnetClient(); }
 }
 
-void sendEnetServer() {
+void send_enet_server() {
+  // Create memory block containing all player positions
+  int sizeof_data = 1 * sizeof(uint8_t) + 3 * app.number_of_players * sizeof(uint16_t);
+  uint8_t *data = malloc(sizeof_data);
+  uint8_t data_index = 1;
 
+  data[0] = HOST_STATE_FLAG;
+
+  for (uint8_t i = 0; i < app.number_of_players; i++) {
+    uint16_t pos_x = app.players[i].pos_x;
+    uint16_t pos_y = app.players[i].pos_y;
+    int16_t angle = app.players[i].angle;
+
+    memcpy(&data[data_index], &pos_x, sizeof(uint16_t));
+    data_index += 2;
+    memcpy(&data[data_index], &pos_y, sizeof(uint16_t));
+    data_index += 2;
+    memcpy(&data[data_index], &angle, sizeof(uint16_t));
+    data_index += 2;
+  }
+
+  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
+  enet_host_broadcast(app.server, 0, packet);
+
+  //Cleanup
+  free(data);
 }
 
-void sendEnetClient() {
+void send_enet_client() {
   // Create memory block containing the local app state
   int sizeof_data = 7 * sizeof(uint8_t);
   uint8_t *data = malloc(sizeof_data);
@@ -324,9 +356,9 @@ void sendEnetClient() {
   free(data);
 }
 
-void sendEnet() {
-  if (app.server) { sendEnetServer(); }
-  else if (app.client) { sendEnetClient(); }
+void send_enet() {
+  if (app.server) { send_enet_server(); }
+  else if (app.client) { send_enet_client(); }
 }
 
 /* SDL Logic */
@@ -413,16 +445,16 @@ void blit(SDL_Texture *texture, int x, int y, int angle) {
 }
 
 /* Player logic */
-int createPlayer(Player *player, int posX, int posY) {
+int createPlayer(Player *player, int pos_x, int pos_y) {
   srand(time(NULL)); //Seed the random generator
-  if (!posX) posX = rand() % 631 + 10;
-  if (!posY) posY = rand() % 471 + 10;
+  if (!pos_x) pos_x = rand() % 631 + 10;
+  if (!pos_y) pos_y = rand() % 471 + 10;
 
   //Create player
   memset(player, 0, sizeof(Player));
   player->id = app.number_of_players;
-  player->posX = posX;
-  player->posY = posY;
+  player->pos_x = pos_x;
+  player->pos_y = pos_y;
   player->angle = 0;
   player->bullet_queue.size = 0;
 
@@ -440,20 +472,20 @@ int createPlayer(Player *player, int posX, int posY) {
 
 void drawPlayer(Player *player) {
   //Round positions to int
-  int posX = (int)floor(player->posX);
-  int posY = (int)floor(player->posY);
+  int pos_x = (int)floor(player->pos_x);
+  int pos_y = (int)floor(player->pos_y);
 
-  blit(player->texture, posX, posY, player->angle);
+  blit(player->texture, pos_x, pos_y, player->angle);
 }
 
 void movePlayerForward(Player *player) {
-  player->posY -= cos(player->angle * PI/180) * PLAYER_SPEED;
-  player->posX += sin(player->angle * PI/180) * PLAYER_SPEED;
+  player->pos_y -= cos(player->angle * PI/180) * PLAYER_SPEED;
+  player->pos_x += sin(player->angle * PI/180) * PLAYER_SPEED;
 }
 
 void movePlayerBackward(Player *player) {
-  player->posY += cos(player->angle * PI/180) * PLAYER_SPEED;
-  player->posX -= sin(player->angle * PI/180) * PLAYER_SPEED;
+  player->pos_y += cos(player->angle * PI/180) * PLAYER_SPEED;
+  player->pos_x -= sin(player->angle * PI/180) * PLAYER_SPEED;
 }
 
 /* Bullet logic */
@@ -488,8 +520,8 @@ void shootBullet(Player *player) {
 
   //Create bullet
   Bullet bullet = {0};
-  bullet.posX = player->posX + playerW / 2 - (BULLET_SIZE / 2 - 1);
-  bullet.posY = player->posY + playerH / 2- (BULLET_SIZE / 2 - 1);
+  bullet.pos_x = player->pos_x + playerW / 2 - (BULLET_SIZE / 2 - 1);
+  bullet.pos_y = player->pos_y + playerH / 2- (BULLET_SIZE / 2 - 1);
   bullet.angle = player->angle;
 
   bullet_enqueue(&player->bullet_queue, &bullet);
@@ -499,8 +531,8 @@ void updateBulletPositions(Player *player) {
   for (int i = 0; i < player->bullet_queue.size; i++) {
     int index = (player->bullet_queue.front + i) % BULLET_AMOUNT;
 
-    player->bullet_queue.bullets[index].posY -= cos(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
-    player->bullet_queue.bullets[index].posX += sin(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
+    player->bullet_queue.bullets[index].pos_y -= cos(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
+    player->bullet_queue.bullets[index].pos_x += sin(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
   }
 }
 
@@ -509,11 +541,11 @@ void drawBullets(Player *player) {
     int index = (player->bullet_queue.front + i) % BULLET_AMOUNT;
 
     //Round positions to int
-    int posX = (int)floor(player->bullet_queue.bullets[index].posX);
-    int posY = (int)floor(player->bullet_queue.bullets[index].posY);
+    int pos_x = (int)floor(player->bullet_queue.bullets[index].pos_x);
+    int pos_y = (int)floor(player->bullet_queue.bullets[index].pos_y);
 
     //Draw rectangle
-    SDL_Rect rect = {posX, posY, BULLET_SIZE, BULLET_SIZE};
+    SDL_Rect rect = {pos_x, pos_y, BULLET_SIZE, BULLET_SIZE};
     SDL_SetRenderDrawColor(app.renderer, 220, 0, 0, 255);
     SDL_RenderDrawRect(app.renderer, &rect);
   }
@@ -535,8 +567,8 @@ void update() {
 
   if (app.up) { movePlayerForward(app.localPlayer); };
   if (app.down) { movePlayerBackward(app.localPlayer); };
-  if (app.left) { app.localPlayer->angle -= PLAYER_ROTATION_SPEED; };
-  if (app.right) { app.localPlayer->angle += PLAYER_ROTATION_SPEED; };
+  if (app.left) { app.localPlayer->angle = (app.localPlayer->angle - PLAYER_ROTATION_SPEED) % 360; };
+  if (app.right) { app.localPlayer->angle = (app.localPlayer->angle + PLAYER_ROTATION_SPEED) % 360; };
   if (app.buttonA && !app.buttonAIsDown) { shootBullet(app.localPlayer); app.buttonAIsDown = 1; };
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
@@ -576,7 +608,7 @@ int main(int argc, char **argv) {
     pollEvents();
     update();
     draw();
-    sendEnet();
+    send_enet();
   }
 
   return 0;
