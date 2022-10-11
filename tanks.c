@@ -15,12 +15,14 @@
 #define BULLET_SIZE 4 //Must be an even number
 #define BULLET_SPEED 1
 #define BULLET_AMOUNT 16
+#define BULLET_TIMEOUT 1 //In seconds
 #define PI 3.14159265358979323846
 
 /* TYPES */
 typedef struct {
   float pos_x;
   float pos_y;
+  struct timeval time_created;
   int angle;
   int bounces;
 } Bullet;
@@ -63,7 +65,7 @@ typedef struct {
   Player players[15];
   uint8_t number_of_players;
   uint8_t current_id;
-  uint8_t isRunning;
+  uint8_t is_running;
   uint8_t up;
   uint8_t down;
   uint8_t left;
@@ -89,7 +91,7 @@ enum host_packet_type {
 int createPlayer(Player *, uint8_t, uint16_t, uint16_t);
 void movePlayerForward(Player *);
 void movePlayerBackward(Player *);
-void shootBullet(Player *);
+void shoot_bullet(Player *);
 Player *get_player_by_id(uint8_t);
 
 App app = {0};
@@ -261,7 +263,7 @@ void pollEnetServer() {
           if (data[2]) { movePlayerBackward(&app.players[*player_ID]); };
           if (data[3]) { app.players[*player_ID].angle -= PLAYER_ROTATION_SPEED; };
           if (data[4]) { app.players[*player_ID].angle += PLAYER_ROTATION_SPEED; };
-          if (data[5] && !app.players[*player_ID].button_a_is_down) { shootBullet(&app.players[*player_ID]); app.players[*player_ID].button_a_is_down = 1; };
+          if (data[5] && !app.players[*player_ID].button_a_is_down) { shoot_bullet(&app.players[*player_ID]); app.players[*player_ID].button_a_is_down = 1; };
           if (!data[5] && app.players[*player_ID].button_a_is_down) { app.players[*player_ID].button_a_is_down = 0; };
         }
 
@@ -468,7 +470,7 @@ void pollEvents() {
   while (SDL_PollEvent(&event)) {
     switch (event.type) {
       case SDL_QUIT:
-        app.isRunning = 0;
+        app.is_running = 0;
         break;
       case SDL_KEYDOWN:
         handleKeyDown(&event.key);
@@ -578,7 +580,21 @@ void bullet_enqueue(Bullet_queue *bullet_queue, Bullet *bullet) {
   if (bullet_queue->size < BULLET_AMOUNT) { bullet_queue->size++; }
 }
 
-void shootBullet(Player *player) {
+uint8_t bullet_timeout(Bullet *bullet) {
+  struct timeval now;
+  uint32_t time_created_full, time_now_full;
+
+  gettimeofday(&now, NULL);
+
+  //Combine seconds & microseconds for a precise result (microseconds loop otherwise)
+  time_created_full = bullet->time_created.tv_sec * 1000000 + bullet->time_created.tv_usec;
+  time_now_full = now.tv_sec * 1000000 + now.tv_usec;
+
+  if ((time_now_full - time_created_full) / 1000000 >= BULLET_TIMEOUT) { return 1; }
+  return 0;
+}
+
+void shoot_bullet(Player *player) {
   //Get player width & height
   int playerW, playerH;
   SDL_QueryTexture(player->texture, NULL, NULL, &playerW, &playerH);
@@ -588,6 +604,7 @@ void shootBullet(Player *player) {
   bullet.pos_x = player->pos_x + playerW / 2 - (BULLET_SIZE / 2 - 1);
   bullet.pos_y = player->pos_y + playerH / 2- (BULLET_SIZE / 2 - 1);
   bullet.angle = player->angle;
+  gettimeofday(&bullet.time_created, NULL);
 
   bullet_enqueue(&player->bullet_queue, &bullet);
 }
@@ -595,6 +612,7 @@ void shootBullet(Player *player) {
 void updateBulletPositions(Player *player) {
   for (int i = 0; i < player->bullet_queue.size; i++) {
     int index = (player->bullet_queue.front + i) % BULLET_AMOUNT;
+    if (bullet_timeout(&player->bullet_queue.bullets[index])) { bullet_dequeue(&player->bullet_queue, &player->bullet_queue.bullets[index]); }
 
     player->bullet_queue.bullets[index].pos_y -= cos(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
     player->bullet_queue.bullets[index].pos_x += sin(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
@@ -634,7 +652,7 @@ void update() {
   if (app.down) { movePlayerBackward(app.localPlayer); };
   if (app.left) { app.localPlayer->angle = (app.localPlayer->angle - PLAYER_ROTATION_SPEED) % 360; };
   if (app.right) { app.localPlayer->angle = (app.localPlayer->angle + PLAYER_ROTATION_SPEED) % 360; };
-  if (app.button_a && !app.button_a_is_down) { shootBullet(app.localPlayer); app.button_a_is_down = 1; };
+  if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.localPlayer); app.button_a_is_down = 1; };
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
     updateBulletPositions(&app.players[i]);
@@ -659,7 +677,7 @@ void draw() {
 }
 
 int main(int argc, char **argv) {
-  app.isRunning = 1;
+  app.is_running = 1;
   atexit(cleanup); //Assign a cleanup function
   if (initSDL() == EXIT_FAILURE) { return -1; } //Initialize SDL
   if (init_enet() == EXIT_FAILURE) { return -1; } //Initialize ENet
@@ -668,7 +686,7 @@ int main(int argc, char **argv) {
   if (load() == EXIT_FAILURE) { return -1; }; //Load state
 
 
-  while (app.isRunning) {
+  while (app.is_running) {
     pollEnet();
     pollEvents();
     update();
