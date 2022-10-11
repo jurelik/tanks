@@ -23,7 +23,7 @@ typedef struct {
   float pos_x;
   float pos_y;
   struct timeval time_created;
-  int angle;
+  uint16_t angle;
   int bounces;
 } Bullet;
 
@@ -84,14 +84,15 @@ enum client_packet_type {
 enum host_packet_type {
   HOST_POSITION_FLAG,
   HOST_STATE_FLAG,
-  HOST_PLAYER_JOINED_FLAG
+  HOST_PLAYER_JOINED_FLAG,
+  HOST_NEW_BULLET_FLAG
 };
 
 /* FUNCTION DEFINITIONS */
 int createPlayer(Player *, uint8_t, uint16_t, uint16_t);
 void movePlayerForward(Player *);
 void movePlayerBackward(Player *);
-void shoot_bullet(Player *);
+void shoot_bullet(Player *, uint16_t, uint16_t, uint16_t);
 Player *get_player_by_id(uint8_t);
 
 App app = {0};
@@ -263,7 +264,7 @@ void pollEnetServer() {
           if (data[2]) { movePlayerBackward(&app.players[*player_ID]); };
           if (data[3]) { app.players[*player_ID].angle -= PLAYER_ROTATION_SPEED; };
           if (data[4]) { app.players[*player_ID].angle += PLAYER_ROTATION_SPEED; };
-          if (data[5] && !app.players[*player_ID].button_a_is_down) { shoot_bullet(&app.players[*player_ID]); app.players[*player_ID].button_a_is_down = 1; };
+          if (data[5] && !app.players[*player_ID].button_a_is_down) { shoot_bullet(&app.players[*player_ID], 0, 0, 0); app.players[*player_ID].button_a_is_down = 1; };
           if (!data[5] && app.players[*player_ID].button_a_is_down) { app.players[*player_ID].button_a_is_down = 0; };
         }
 
@@ -346,6 +347,24 @@ void pollEnetClient() {
 
           if (createPlayer(&app.players[app.number_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
         }
+        else if (data[0] == HOST_NEW_BULLET_FLAG) {
+          uint8_t id = data[1];
+          uint8_t data_index = 2;
+          uint16_t pos_x;
+          uint16_t pos_y;
+          uint16_t angle;
+
+          if (id == app.localPlayer->id) return; //Ignore if own bullet
+          Player *player = get_player_by_id(id);
+
+          memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+          data_index += 2;
+          memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+          data_index += 2;
+          memcpy(&angle, &data[data_index], sizeof(uint16_t));
+
+          shoot_bullet(player, pos_x, pos_y, angle);
+        }
         break;
       case ENET_EVENT_TYPE_DISCONNECT:
         printf("Client disconnected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
@@ -381,6 +400,39 @@ void send_enet_server() {
     memcpy(&data[data_index], &angle, sizeof(uint16_t));
     data_index += 2;
   }
+
+  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
+  enet_host_broadcast(app.server, 0, packet);
+
+  //Cleanup
+  free(data);
+}
+
+void send_enet_server_new_bullet(Player *player, Bullet *bullet) {
+  /*
+  ----------------------------------------------------------------------
+  |  flag  |  p_id  |     pos_x      |     pos_y      |     angle      |
+  ----------------------------------------------------------------------
+  */
+
+  // Create memory block containing all bullet information
+  int sizeof_data = 2 * sizeof(uint8_t) + 3 * sizeof(uint16_t);
+  uint8_t *data = malloc(sizeof_data);
+  uint8_t data_index = 1;
+
+  data[0] = HOST_NEW_BULLET_FLAG;
+  memcpy(&data[data_index], &player->id, sizeof(uint8_t));
+  data_index += 1;
+
+  uint16_t pos_x = bullet->pos_x;
+  uint16_t pos_y = bullet->pos_y;
+  int16_t angle = bullet->angle;
+
+  memcpy(&data[data_index], &pos_x, sizeof(uint16_t));
+  data_index += 2;
+  memcpy(&data[data_index], &pos_y, sizeof(uint16_t));
+  data_index += 2;
+  memcpy(&data[data_index], &angle, sizeof(uint16_t));
 
   ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_host_broadcast(app.server, 0, packet);
@@ -594,19 +646,21 @@ uint8_t bullet_timeout(Bullet *bullet) {
   return 0;
 }
 
-void shoot_bullet(Player *player) {
+void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, uint16_t angle) {
   //Get player width & height
   int playerW, playerH;
   SDL_QueryTexture(player->texture, NULL, NULL, &playerW, &playerH);
 
   //Create bullet
   Bullet bullet = {0};
-  bullet.pos_x = player->pos_x + playerW / 2 - (BULLET_SIZE / 2 - 1);
-  bullet.pos_y = player->pos_y + playerH / 2- (BULLET_SIZE / 2 - 1);
-  bullet.angle = player->angle;
-  gettimeofday(&bullet.time_created, NULL);
+  if (pos_x) { bullet.pos_x = pos_x; } else { bullet.pos_x = (uint16_t)player->pos_x + playerW / 2 - (BULLET_SIZE / 2 - 1); }
+  if (pos_y) { bullet.pos_y = pos_y; } else { bullet.pos_y = (uint16_t)player->pos_y + playerH / 2 - (BULLET_SIZE / 2 - 1); }
+  if (angle) { bullet.angle = angle; } else { bullet.angle = player->angle; }
 
+  gettimeofday(&bullet.time_created, NULL);
   bullet_enqueue(&player->bullet_queue, &bullet);
+
+  if (app.server) { send_enet_server_new_bullet(player, &bullet); } //Broadcast to clients if server
 }
 
 void updateBulletPositions(Player *player) {
@@ -652,7 +706,7 @@ void update() {
   if (app.down) { movePlayerBackward(app.localPlayer); };
   if (app.left) { app.localPlayer->angle = (app.localPlayer->angle - PLAYER_ROTATION_SPEED) % 360; };
   if (app.right) { app.localPlayer->angle = (app.localPlayer->angle + PLAYER_ROTATION_SPEED) % 360; };
-  if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.localPlayer); app.button_a_is_down = 1; };
+  if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.localPlayer, 0, 0, 0); app.button_a_is_down = 1; };
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
     updateBulletPositions(&app.players[i]);
