@@ -10,6 +10,9 @@
 
 #define SCREEN_WIDTH 640
 #define SCREEN_HEIGHT 480
+#define TILE_SIZE 16
+#define MAP_WIDTH 40
+#define MAP_HEIGHT 40
 #define PLAYER_SPEED 3
 #define PLAYER_ROTATION_SPEED 3
 #define BULLET_SIZE 4 //Must be an even number
@@ -61,6 +64,7 @@ typedef struct {
   ENetEvent event;
   ENetPeer *peer;
   int enet_initialized;
+  uint8_t map[MAP_HEIGHT][MAP_WIDTH];
   Player *localPlayer;
   Player players[15];
   uint8_t number_of_players;
@@ -576,6 +580,32 @@ void blit(SDL_Texture *texture, int x, int y, int16_t angle) {
   SDL_RenderCopyEx(app.renderer, texture, NULL, &dest, angle, NULL, SDL_FLIP_NONE);
 }
 
+/* Map logic */
+void generate_map() {
+ app.map[5][5] = 1;
+ app.map[5][6] = 1;
+ app.map[5][7] = 1;
+ app.map[8][5] = 1;
+ app.map[8][6] = 1;
+ app.map[8][7] = 1;
+}
+
+void draw_map() {
+  for (int i = 0; i < MAP_HEIGHT; i++) {
+    for (int j = 0; j < MAP_WIDTH; j++) {
+      if (app.map[i][j] == 0) { continue; }
+
+      uint16_t pos_x = j * TILE_SIZE;
+      uint16_t pos_y = i * TILE_SIZE;
+
+      //Draw rectangle
+      SDL_Rect rect = {pos_x, pos_y, TILE_SIZE, TILE_SIZE};
+      SDL_SetRenderDrawColor(app.renderer, 0, 0, 255, 255);
+      SDL_RenderDrawRect(app.renderer, &rect);
+    }
+  }
+}
+
 /* Player logic */
 int create_player(Player *player, uint8_t id, uint16_t pos_x, uint16_t pos_y) {
   srand(time(NULL)); //Seed the random generator
@@ -739,6 +769,7 @@ void drawBullets(Player *player) {
 /* Game loop logic */
 int load() {
   if (app.server) {
+    generate_map();
     if (create_player(&app.players[0], 0, 0, 0) == EXIT_FAILURE) { return EXIT_FAILURE; }
 
     app.localPlayer = &app.players[0]; //Create a pointer to the local player
@@ -767,6 +798,8 @@ void draw() {
   //Draw background
   SDL_SetRenderDrawColor(app.renderer, 25, 25, 25, 255);
   SDL_RenderClear(app.renderer);
+
+  draw_map(); //Draw map
 
   for (int i = 0; i < app.number_of_players; i++) {
     drawPlayer(&app.players[i]); //Draw player
