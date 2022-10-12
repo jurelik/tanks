@@ -23,7 +23,7 @@ typedef struct {
   float pos_x;
   float pos_y;
   struct timeval time_created;
-  uint16_t angle;
+  int16_t angle;
   int bounces;
 } Bullet;
 
@@ -92,7 +92,7 @@ enum host_packet_type {
 int createPlayer(Player *, uint8_t, uint16_t, uint16_t);
 void movePlayerForward(Player *);
 void movePlayerBackward(Player *);
-void shoot_bullet(Player *, uint16_t, uint16_t, uint16_t);
+void shoot_bullet(Player *, uint16_t, uint16_t, int16_t);
 Player *get_player_by_id(uint8_t);
 
 App app = {0};
@@ -322,7 +322,7 @@ void pollEnetClient() {
             data_index += 2;
             memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
             data_index += 2;
-            memcpy(&angle, &data[data_index], sizeof(uint16_t));
+            memcpy(&angle, &data[data_index], sizeof(int16_t));
             data_index += 2;
 
             app.players[i].pos_x = pos_x;
@@ -352,7 +352,7 @@ void pollEnetClient() {
           uint8_t data_index = 2;
           uint16_t pos_x;
           uint16_t pos_y;
-          uint16_t angle;
+          int16_t angle;
 
           if (id == app.localPlayer->id) return; //Ignore if own bullet
           Player *player = get_player_by_id(id);
@@ -361,7 +361,7 @@ void pollEnetClient() {
           data_index += 2;
           memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
           data_index += 2;
-          memcpy(&angle, &data[data_index], sizeof(uint16_t));
+          memcpy(&angle, &data[data_index], sizeof(int16_t));
 
           shoot_bullet(player, pos_x, pos_y, angle);
         }
@@ -397,7 +397,7 @@ void send_enet_server() {
     data_index += 2;
     memcpy(&data[data_index], &pos_y, sizeof(uint16_t));
     data_index += 2;
-    memcpy(&data[data_index], &angle, sizeof(uint16_t));
+    memcpy(&data[data_index], &angle, sizeof(int16_t));
     data_index += 2;
   }
 
@@ -432,7 +432,7 @@ void send_enet_server_new_bullet(Player *player, Bullet *bullet) {
   data_index += 2;
   memcpy(&data[data_index], &pos_y, sizeof(uint16_t));
   data_index += 2;
-  memcpy(&data[data_index], &angle, sizeof(uint16_t));
+  memcpy(&data[data_index], &angle, sizeof(int16_t));
 
   ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_host_broadcast(app.server, 0, packet);
@@ -543,7 +543,7 @@ SDL_Texture *loadTexture(char *filename) {
 }
 
 //Copy texture to a rectangle
-void blit(SDL_Texture *texture, int x, int y, int angle) {
+void blit(SDL_Texture *texture, int x, int y, int16_t angle) {
   SDL_Rect dest = { x, y };
   SDL_QueryTexture(texture, NULL, NULL, &dest.w, &dest.h); //Get texture width/height and apply to dest
   SDL_RenderCopyEx(app.renderer, texture, NULL, &dest, angle, NULL, SDL_FLIP_NONE);
@@ -646,7 +646,7 @@ uint8_t bullet_timeout(Bullet *bullet) {
   return 0;
 }
 
-void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, uint16_t angle) {
+void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, int16_t angle) {
   //Get player width & height
   int playerW, playerH;
   SDL_QueryTexture(player->texture, NULL, NULL, &playerW, &playerH);
