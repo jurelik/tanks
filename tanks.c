@@ -13,6 +13,7 @@
 #define TILE_SIZE 16
 #define MAP_WIDTH 40
 #define MAP_HEIGHT 40
+#define PLAYER_SIZE 16
 #define PLAYER_SPEED 3
 #define PLAYER_ROTATION_SPEED 3
 #define BULLET_SIZE 4 //Must be an even number
@@ -667,6 +668,26 @@ Player *get_player_by_id(uint8_t id) {
   return NULL;
 }
 
+int check_player_collision(uint16_t *pos_x_tank, uint16_t *pos_y_tank) {
+  for (int i = 0; i < MAP_HEIGHT; i++) {
+    for (int j = 0; j < MAP_WIDTH; j++) {
+      if (app.map[i][j] == 0) { continue; }
+
+      //Create wall rectangle
+      uint16_t pos_x_wall = j * TILE_SIZE;
+      uint16_t pos_y_wall = i * TILE_SIZE;
+      SDL_Rect rect_wall = {pos_x_wall, pos_y_wall, TILE_SIZE, TILE_SIZE};
+
+      //Create tank rectangle
+      SDL_Rect rect_tank = {*pos_x_tank, *pos_y_tank, PLAYER_SIZE, PLAYER_SIZE};
+
+      if (SDL_HasIntersection(&rect_wall, &rect_tank) == SDL_TRUE) { return 1; }
+    }
+  }
+
+  return 0;
+}
+
 void drawPlayer(Player *player) {
   //Round positions to int
   int pos_x = (int)floor(player->pos_x);
@@ -676,13 +697,29 @@ void drawPlayer(Player *player) {
 }
 
 void movePlayerForward(Player *player) {
-  player->pos_y -= cos(player->angle * PI/180) * PLAYER_SPEED;
-  player->pos_x += sin(player->angle * PI/180) * PLAYER_SPEED;
+  float new_pos_xf = player->pos_x + sin(player->angle * PI/180) * PLAYER_SPEED;
+  float new_pos_yf = player->pos_y - cos(player->angle * PI/180) * PLAYER_SPEED;
+  uint16_t new_pos_xi = (uint16_t)floor(new_pos_xf);
+  uint16_t new_pos_yi = (uint16_t)floor(new_pos_yf);
+
+  if(check_player_collision(&new_pos_xi, &new_pos_yi)) { return; }
+
+  //Move player
+  player->pos_x = new_pos_xf;
+  player->pos_y = new_pos_yf;
 }
 
 void movePlayerBackward(Player *player) {
-  player->pos_y += cos(player->angle * PI/180) * PLAYER_SPEED;
-  player->pos_x -= sin(player->angle * PI/180) * PLAYER_SPEED;
+  float new_pos_xf = player->pos_x - sin(player->angle * PI/180) * PLAYER_SPEED;
+  float new_pos_yf = player->pos_y + cos(player->angle * PI/180) * PLAYER_SPEED;
+  uint16_t new_pos_xi = (uint16_t)floor(new_pos_xf);
+  uint16_t new_pos_yi = (uint16_t)floor(new_pos_yf);
+
+  if(check_player_collision(&new_pos_xi, &new_pos_yi)) { return; }
+
+  //Move player
+  player->pos_x = new_pos_xf;
+  player->pos_y = new_pos_yf;
 }
 
 /* Bullet logic */
