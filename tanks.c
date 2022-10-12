@@ -85,11 +85,13 @@ enum host_packet_type {
   HOST_POSITION_FLAG,
   HOST_STATE_FLAG,
   HOST_PLAYER_JOINED_FLAG,
+  HOST_PLAYER_LEFT_FLAG,
   HOST_NEW_BULLET_FLAG
 };
 
 /* FUNCTION DEFINITIONS */
-int createPlayer(Player *, uint8_t, uint16_t, uint16_t);
+int create_player(Player *, uint8_t, uint16_t, uint16_t);
+int delete_player(uint8_t *);
 void movePlayerForward(Player *);
 void movePlayerBackward(Player *);
 void shoot_bullet(Player *, uint16_t, uint16_t, int16_t);
@@ -199,6 +201,21 @@ void host_send_player_joined() {
   free(data);
 }
 
+void host_send_player_left(uint8_t *id) {
+  // Create memory block containing the player id
+  int sizeof_data = 2 * sizeof(uint8_t);
+  uint8_t *data = malloc(sizeof_data);
+
+  data[0] = HOST_PLAYER_LEFT_FLAG;
+  data[1] = *id;
+
+  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
+  enet_host_broadcast(app.server, 0, packet);
+
+  // Cleanup
+  free(data);
+}
+
 int connect_to_host() {
   app.peer = enet_host_connect(app.client, &app.address, 1, 0);
 
@@ -248,7 +265,7 @@ void pollEnetServer() {
         memcpy(app.event.peer->data, &app.current_id, sizeof(uint8_t));
 
         //Create player
-        if (createPlayer(&app.players[app.number_of_players], app.current_id, 0, 0) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+        if (create_player(&app.players[app.number_of_players], app.current_id, 0, 0) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
 
         //Send player position to client
         host_send_position(app.event.peer);
@@ -260,17 +277,22 @@ void pollEnetServer() {
 
         if (data[0] == CLIENT_STATE_FLAG) {
           uint8_t *player_ID = (uint8_t *)app.event.peer->data;
-          if (data[1]) { movePlayerForward(&app.players[*player_ID]); };
-          if (data[2]) { movePlayerBackward(&app.players[*player_ID]); };
-          if (data[3]) { app.players[*player_ID].angle -= PLAYER_ROTATION_SPEED; };
-          if (data[4]) { app.players[*player_ID].angle += PLAYER_ROTATION_SPEED; };
-          if (data[5] && !app.players[*player_ID].button_a_is_down) { shoot_bullet(&app.players[*player_ID], 0, 0, 0); app.players[*player_ID].button_a_is_down = 1; };
-          if (!data[5] && app.players[*player_ID].button_a_is_down) { app.players[*player_ID].button_a_is_down = 0; };
+          Player *player = get_player_by_id(*player_ID);
+
+          if (data[1]) { movePlayerForward(player); };
+          if (data[2]) { movePlayerBackward(player); };
+          if (data[3]) { player->angle -= PLAYER_ROTATION_SPEED; };
+          if (data[4]) { player->angle += PLAYER_ROTATION_SPEED; };
+          if (data[5] && !player->button_a_is_down) { shoot_bullet(player, 0, 0, 0); player->button_a_is_down = 1; };
+          if (!data[5] && player->button_a_is_down) { player->button_a_is_down = 0; };
         }
 
         break;
       case ENET_EVENT_TYPE_DISCONNECT:
         printf("Client disconnected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
+
+        host_send_player_left(app.event.peer->data);
+        if (delete_player(app.event.peer->data) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
 
         break;
       case ENET_EVENT_TYPE_NONE:
@@ -305,10 +327,11 @@ void pollEnetClient() {
             memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
             data_index += 2;
 
-            if (createPlayer(&app.players[i], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+            if (create_player(&app.players[i], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
           }
 
           app.localPlayer = &app.players[app.number_of_players - 1]; //Last player in app.players is localPlayer
+          printf("Your id is: %d\n", app.localPlayer->id);
         }
         else if (data[0] == HOST_STATE_FLAG) {
           int data_index = 1;
@@ -345,7 +368,11 @@ void pollEnetClient() {
           data_index += 2;
           memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
 
-          if (createPlayer(&app.players[app.number_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+          if (create_player(&app.players[app.number_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+        }
+        else if (data[0] == HOST_PLAYER_LEFT_FLAG) {
+          uint8_t id = data[1];
+          if (delete_player(&id) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
         }
         else if (data[0] == HOST_NEW_BULLET_FLAG) {
           uint8_t id = data[1];
@@ -550,7 +577,7 @@ void blit(SDL_Texture *texture, int x, int y, int16_t angle) {
 }
 
 /* Player logic */
-int createPlayer(Player *player, uint8_t id, uint16_t pos_x, uint16_t pos_y) {
+int create_player(Player *player, uint8_t id, uint16_t pos_x, uint16_t pos_y) {
   srand(time(NULL)); //Seed the random generator
   if (!pos_x) pos_x = rand() % 631 + 10;
   if (!pos_y) pos_y = rand() % 471 + 10;
@@ -574,6 +601,27 @@ int createPlayer(Player *player, uint8_t id, uint16_t pos_x, uint16_t pos_y) {
   app.current_id++; //Increase current id
 
   return 0;
+}
+
+int delete_player(uint8_t *id) {
+  uint8_t local_player_id = app.localPlayer->id;
+
+  for (uint8_t i = 0; i < app.number_of_players; i++) {
+    if (app.players[i].id == *id) {
+      for (uint8_t j = i; j < app.number_of_players - 1; j++) {
+        app.players[j] = app.players[j + 1];
+      }
+
+      app.number_of_players--; //Decrement number of players
+
+      //Update local player pointer
+      Player *local_player = get_player_by_id(local_player_id);
+      app.localPlayer = local_player;
+      return 0;
+    }
+  }
+
+  return EXIT_FAILURE;
 }
 
 Player *get_player_by_id(uint8_t id) {
@@ -691,7 +739,7 @@ void drawBullets(Player *player) {
 /* Game loop logic */
 int load() {
   if (app.server) {
-    if (createPlayer(&app.players[0], 0, 0, 0) == EXIT_FAILURE) { return EXIT_FAILURE; }
+    if (create_player(&app.players[0], 0, 0, 0) == EXIT_FAILURE) { return EXIT_FAILURE; }
 
     app.localPlayer = &app.players[0]; //Create a pointer to the local player
   }
