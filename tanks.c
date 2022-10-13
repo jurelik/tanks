@@ -155,6 +155,13 @@ int init_client() {
 }
 
 void host_send_position(ENetPeer *peer) {
+  /* PACKET STRUCTURE */
+  /*       |------------*number of players------------|
+  -----------------------------------------------------
+  |  flag  |  p_id  |     pos_x      |     pos_y      |
+  -----------------------------------------------------
+  */
+
   // Create memory block containing the player positions
   int sizeof_data = 2 * sizeof(uint8_t) + app.number_of_players * (sizeof(uint8_t) + 2 * sizeof(uint16_t));
   uint8_t *data = malloc(sizeof_data);
@@ -164,11 +171,11 @@ void host_send_position(ENetPeer *peer) {
   int position_index = 2;
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
-    uint16_t id = (uint16_t)app.players[i].id;
+    uint16_t id = (uint8_t)app.players[i].id;
     uint16_t pos_x = (uint16_t)app.players[i].pos_x;
     uint16_t pos_y = (uint16_t)app.players[i].pos_y;
 
-    memcpy(&data[position_index], &id, sizeof(uint16_t));
+    memcpy(&data[position_index], &id, sizeof(uint8_t));
     position_index += 1;
     memcpy(&data[position_index], &pos_x, sizeof(uint16_t));
     position_index += 2;
@@ -184,6 +191,12 @@ void host_send_position(ENetPeer *peer) {
 }
 
 void host_send_player_joined() {
+  /* PACKET STRUCTURE
+  --------------------------------------------
+  |  flag  |     pos_x      |     pos_y      |
+  --------------------------------------------
+  */
+
   // Create memory block containing the player positions
   int sizeof_data = 2 * sizeof(uint8_t) + 2 * sizeof(uint16_t);
   uint8_t *data = malloc(sizeof_data);
@@ -207,6 +220,12 @@ void host_send_player_joined() {
 }
 
 void host_send_player_left(uint8_t *id) {
+  /* PACKET STRUCTURE
+  -------------------
+  |  flag  |  p_id  |
+  -------------------
+  */
+
   // Create memory block containing the player id
   int sizeof_data = 2 * sizeof(uint8_t);
   uint8_t *data = malloc(sizeof_data);
@@ -413,6 +432,13 @@ void pollEnet() {
 }
 
 void send_enet_server() {
+  /* PACKET STRUCTURE */
+  /*       |----------------*number of players----------------|
+  -------------------------------------------------------------
+  |  flag  |     pos_x      |     pos_y      |     angle      |
+  -------------------------------------------------------------
+  */
+
   // Create memory block containing all player positions
   int sizeof_data = 1 * sizeof(uint8_t) + 3 * app.number_of_players * sizeof(uint16_t);
   uint8_t *data = malloc(sizeof_data);
@@ -441,7 +467,7 @@ void send_enet_server() {
 }
 
 void send_enet_server_new_bullet(Player *player, Bullet *bullet) {
-  /*
+  /* PACKET STRUCTURE
   ----------------------------------------------------------------------
   |  flag  |  p_id  |     pos_x      |     pos_y      |     angle      |
   ----------------------------------------------------------------------
@@ -474,6 +500,12 @@ void send_enet_server_new_bullet(Player *player, Bullet *bullet) {
 }
 
 void send_enet_client() {
+  /* PACKET STRUCTURE
+  ----------------------------------------------------------------
+  |  flag  |   up   |  down  |  left  | right  | but_a  | but_b  |
+  ----------------------------------------------------------------
+  */
+
   // Create memory block containing the local app state
   int sizeof_data = 7 * sizeof(uint8_t);
   uint8_t *data = malloc(sizeof_data);
