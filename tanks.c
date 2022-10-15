@@ -66,7 +66,7 @@ typedef struct {
   ENetPeer *peer;
   int enet_initialized;
   uint8_t map[MAP_HEIGHT][MAP_WIDTH];
-  Player *localPlayer;
+  Player *local_player;
   Player players[15];
   uint8_t number_of_players;
   uint8_t current_id;
@@ -88,6 +88,7 @@ enum client_packet_type {
 
 enum host_packet_type {
   HOST_POSITION_FLAG,
+  HOST_MAP_FLAG,
   HOST_STATE_FLAG,
   HOST_PLAYER_JOINED_FLAG,
   HOST_PLAYER_LEFT_FLAG,
@@ -107,7 +108,7 @@ App app = {0};
 void cleanup() {
   if (app.window) { SDL_DestroyWindow(app.window); }
   if (app.renderer) { SDL_DestroyRenderer(app.renderer); }
-  if (app.localPlayer->texture) { SDL_DestroyTexture(app.localPlayer->texture); }
+  if (app.local_player->texture) { SDL_DestroyTexture(app.local_player->texture); }
   if (app.server) { enet_host_destroy(app.server); }
   if (app.client) { enet_host_destroy(app.client); }
   if (app.enet_initialized) { enet_deinitialize(); }
@@ -182,6 +183,30 @@ void host_send_position(ENetPeer *peer) {
     memcpy(&data[position_index], &pos_y, sizeof(uint16_t));
     position_index += 2;
   }
+
+  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
+  enet_peer_send(peer, 0, packet);
+
+  // Cleanup
+  free(data);
+}
+
+void host_send_map(ENetPeer *peer) {
+  /* PACKET STRUCTURE */
+  /*
+  -----------------------------------------------------
+  |  flag  |               map_array                  |
+  -----------------------------------------------------
+  */
+
+  // Create memory block containing the map array
+  int sizeof_data = sizeof(uint8_t) + sizeof(app.map);
+  uint8_t *data = malloc(sizeof_data);
+
+  data[0] = HOST_MAP_FLAG;
+  int position_index = 1;
+
+  memcpy(&data[position_index], &app.map, sizeof(app.map));
 
   ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
   enet_peer_send(peer, 0, packet);
@@ -278,7 +303,7 @@ int host_or_join(char **argv) {
   }
 }
 
-void pollEnetServer() {
+void poll_enet_server() {
   while (enet_host_service(app.server, &app.event, 0) > 0) {
     switch (app.event.type) {
       case ENET_EVENT_TYPE_CONNECT:
@@ -291,9 +316,9 @@ void pollEnetServer() {
         //Create player
         if (create_player(&app.players[app.number_of_players], app.current_id, 0, 0) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
 
-        //Send player position to client
-        host_send_position(app.event.peer);
-        host_send_player_joined();
+        host_send_position(app.event.peer); //Send player position to client
+        host_send_map(app.event.peer); //Send map to client
+        host_send_player_joined(); //Broadcast player joined to all
 
         break;
       case ENET_EVENT_TYPE_RECEIVE:
@@ -325,7 +350,7 @@ void pollEnetServer() {
   }
 }
 
-void pollEnetClient() {
+void poll_enet_client() {
   while (enet_host_service(app.client, &app.event, 0) > 0) {
     switch (app.event.type) {
       case ENET_EVENT_TYPE_CONNECT:
@@ -354,8 +379,14 @@ void pollEnetClient() {
             if (create_player(&app.players[i], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
           }
 
-          app.localPlayer = &app.players[app.number_of_players - 1]; //Last player in app.players is localPlayer
-          printf("Your id is: %d\n", app.localPlayer->id);
+          app.local_player = &app.players[app.number_of_players - 1]; //Last player in app.players is local_player
+          printf("Your id is: %d\n", app.local_player->id);
+        }
+        else if (data[0] == HOST_MAP_FLAG) {
+          int data_index = 1;
+
+          //Copy map data
+          memcpy(&app.map, &data[data_index], MAP_HEIGHT * MAP_WIDTH);
         }
         else if (data[0] == HOST_STATE_FLAG) {
           int data_index = 1;
@@ -405,7 +436,7 @@ void pollEnetClient() {
           uint16_t pos_y;
           int16_t angle;
 
-          if (id == app.localPlayer->id) return; //Ignore if own bullet
+          if (id == app.local_player->id) return; //Ignore if own bullet
           Player *player = get_player_by_id(id);
 
           memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
@@ -426,9 +457,9 @@ void pollEnetClient() {
   }
 }
 
-void pollEnet() {
-  if (app.server) { pollEnetServer(); }
-  else if (app.client) { pollEnetClient(); }
+void poll_enet() {
+  if (app.server) { poll_enet_server(); }
+  else if (app.client) { poll_enet_client(); }
 }
 
 void send_enet_server() {
@@ -531,7 +562,7 @@ void send_enet() {
 }
 
 /* SDL Logic */
-int initSDL() {
+int init_SDL() {
   //Init SDL
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
     fprintf(stderr, "Failed to initialize SDL: %s\n", SDL_GetError());
@@ -580,7 +611,7 @@ void handleKeyUp(SDL_KeyboardEvent *event) {
   if (event->keysym.scancode == SDL_SCANCODE_X) { app.button_b = 0; };
 }
 
-void pollEvents() {
+void poll_events() {
   SDL_Event event;
 
   while (SDL_PollEvent(&event)) {
@@ -667,7 +698,7 @@ int create_player(Player *player, uint8_t id, uint16_t pos_x, uint16_t pos_y) {
 }
 
 int delete_player(uint8_t *id) {
-  uint8_t local_player_id = app.localPlayer->id;
+  uint8_t local_player_id = app.local_player->id;
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
     if (app.players[i].id == *id) {
@@ -679,7 +710,7 @@ int delete_player(uint8_t *id) {
 
       //Update local player pointer
       Player *local_player = get_player_by_id(local_player_id);
-      app.localPlayer = local_player;
+      app.local_player = local_player;
       return 0;
     }
   }
@@ -841,7 +872,7 @@ int load() {
     generate_map();
     if (create_player(&app.players[0], 0, 0, 0) == EXIT_FAILURE) { return EXIT_FAILURE; }
 
-    app.localPlayer = &app.players[0]; //Create a pointer to the local player
+    app.local_player = &app.players[0]; //Create a pointer to the local player
   }
 
   return 0;
@@ -850,11 +881,11 @@ int load() {
 void update() {
   if (!app.number_of_players) { return; } //Skip if no players
 
-  if (app.up) { movePlayerForward(app.localPlayer); };
-  if (app.down) { movePlayerBackward(app.localPlayer); };
-  if (app.left) { app.localPlayer->angle = (app.localPlayer->angle - PLAYER_ROTATION_SPEED) % 360; };
-  if (app.right) { app.localPlayer->angle = (app.localPlayer->angle + PLAYER_ROTATION_SPEED) % 360; };
-  if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.localPlayer, 0, 0, 0); app.button_a_is_down = 1; };
+  if (app.up) { movePlayerForward(app.local_player); };
+  if (app.down) { movePlayerBackward(app.local_player); };
+  if (app.left) { app.local_player->angle = (app.local_player->angle - PLAYER_ROTATION_SPEED) % 360; };
+  if (app.right) { app.local_player->angle = (app.local_player->angle + PLAYER_ROTATION_SPEED) % 360; };
+  if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.local_player, 0, 0, 0); app.button_a_is_down = 1; };
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
     updateBulletPositions(&app.players[i]);
@@ -883,7 +914,7 @@ void draw() {
 int main(int argc, char **argv) {
   app.is_running = 1;
   atexit(cleanup); //Assign a cleanup function
-  if (initSDL() == EXIT_FAILURE) { return -1; } //Initialize SDL
+  if (init_SDL() == EXIT_FAILURE) { return -1; } //Initialize SDL
   if (init_enet() == EXIT_FAILURE) { return -1; } //Initialize ENet
 
   if (host_or_join(argv) == EXIT_FAILURE) { return -1; } //Host or join
@@ -891,8 +922,8 @@ int main(int argc, char **argv) {
 
 
   while (app.is_running) {
-    pollEnet();
-    pollEvents();
+    poll_enet();
+    poll_events();
     update();
     draw();
     send_enet();
