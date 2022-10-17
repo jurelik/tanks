@@ -857,23 +857,54 @@ void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, int16_t angle)
   if (app.server) { send_enet_server_new_bullet(player, &bullet); } //Broadcast to clients if server
 }
 
-void updateBulletPositions(Player *player) {
-  for (int i = 0; i < player->bullet_queue.size; i++) {
-    int index = (player->bullet_queue.front + i) % BULLET_AMOUNT;
-    if (bullet_timeout(&player->bullet_queue.bullets[index])) { bullet_dequeue(&player->bullet_queue, &player->bullet_queue.bullets[index]); }
+uint8_t bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
+  //Check other player collisions
+  for (int i = 0; i < app.number_of_players; i++) {
+    if (p->id == app.players[i].id) { continue; } //Ignore self
 
-    player->bullet_queue.bullets[index].pos_y -= cos(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
-    player->bullet_queue.bullets[index].pos_x += sin(player->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
+    //Create other player rectangle
+    uint16_t pos_x_other = app.players[i].pos_x;
+    uint16_t pos_y_other = app.players[i].pos_y;
+    SDL_Rect rect_other = {pos_x_other, pos_y_other, PLAYER_SIZE, PLAYER_SIZE};
+
+    //Create tank rectangle
+    SDL_Rect rect_bullet = {*pos_x_bullet, *pos_y_bullet, BULLET_SIZE, BULLET_SIZE};
+
+    if (SDL_HasIntersection(&rect_other, &rect_bullet) == SDL_TRUE) { return 1; }
+  }
+
+  return 0;
+}
+
+void update_bullet_positions(Player *p) {
+  for (int i = 0; i < p->bullet_queue.size; i++) {
+    int index = (p->bullet_queue.front + i) % BULLET_AMOUNT;
+    if (bullet_timeout(&p->bullet_queue.bullets[index])) { bullet_dequeue(&p->bullet_queue, &p->bullet_queue.bullets[index]); }
+
+    float new_pos_xf = p->bullet_queue.bullets[index].pos_x + sin(p->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
+    float new_pos_yf = p->bullet_queue.bullets[index].pos_y - cos(p->bullet_queue.bullets[index].angle * PI/180) * BULLET_SPEED;
+    uint16_t new_pos_xi = new_pos_xf;
+    uint16_t new_pos_yi = new_pos_yf;
+
+    //Check if bullet hit a player
+    if (bullet_has_collided(p, &new_pos_xi, &new_pos_yi)) {
+      bullet_dequeue(&p->bullet_queue, &p->bullet_queue.bullets[index]);
+      printf("Bullet hit a tank!\n");
+    }
+
+    //Move bullet
+    p->bullet_queue.bullets[index].pos_x = new_pos_xf;
+    p->bullet_queue.bullets[index].pos_y = new_pos_yf;
   }
 }
 
 void drawBullets(Player *player) {
   for (int i = 0; i < player->bullet_queue.size; i++) {
-    int index = (player->bullet_queue.front + i) % BULLET_AMOUNT;
+    uint8_t index = (player->bullet_queue.front + i) % BULLET_AMOUNT;
 
     //Round positions to int
-    int pos_x = (int)floor(player->bullet_queue.bullets[index].pos_x);
-    int pos_y = (int)floor(player->bullet_queue.bullets[index].pos_y);
+    uint16_t pos_x = player->bullet_queue.bullets[index].pos_x;
+    uint16_t pos_y = player->bullet_queue.bullets[index].pos_y;
 
     //Draw rectangle
     SDL_Rect rect = {pos_x, pos_y, BULLET_SIZE, BULLET_SIZE};
@@ -904,7 +935,7 @@ void update() {
   if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.local_player, 0, 0, 0); app.button_a_is_down = 1; };
 
   for (uint8_t i = 0; i < app.number_of_players; i++) {
-    updateBulletPositions(&app.players[i]);
+    update_bullet_positions(&app.players[i]);
   }
 }
 
