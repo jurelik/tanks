@@ -731,7 +731,8 @@ Player *get_player_by_id(uint8_t id) {
   return NULL;
 }
 
-int check_player_collision(uint16_t *pos_x_tank, uint16_t *pos_y_tank) {
+uint8_t player_has_collided(Player *p, uint16_t *pos_x_tank, uint16_t *pos_y_tank) {
+  //Check map collisions
   for (int i = 0; i < MAP_HEIGHT; i++) {
     for (int j = 0; j < MAP_WIDTH; j++) {
       if (app.map[i][j] == 0) { continue; }
@@ -748,41 +749,56 @@ int check_player_collision(uint16_t *pos_x_tank, uint16_t *pos_y_tank) {
     }
   }
 
+  //Check other player collisions
+  for (int i = 0; i < app.number_of_players; i++) {
+    if (p->id == app.players[i].id) { continue; } //Ignore self
+
+    //Create other player rectangle
+    uint16_t pos_x_other = app.players[i].pos_x;
+    uint16_t pos_y_other = app.players[i].pos_y;
+    SDL_Rect rect_other = {pos_x_other, pos_y_other, PLAYER_SIZE, PLAYER_SIZE};
+
+    //Create tank rectangle
+    SDL_Rect rect_tank = {*pos_x_tank, *pos_y_tank, PLAYER_SIZE, PLAYER_SIZE};
+
+    if (SDL_HasIntersection(&rect_other, &rect_tank) == SDL_TRUE) { return 1; }
+  }
+
   return 0;
 }
 
-void drawPlayer(Player *player) {
+void drawPlayer(Player *p) {
   //Round positions to int
-  int pos_x = (int)floor(player->pos_x);
-  int pos_y = (int)floor(player->pos_y);
+  int pos_x = (int)floor(p->pos_x);
+  int pos_y = (int)floor(p->pos_y);
 
-  blit(player->texture, pos_x, pos_y, player->angle);
+  blit(p->texture, pos_x, pos_y, p->angle);
 }
 
-void movePlayerForward(Player *player) {
-  float new_pos_xf = player->pos_x + sin(player->angle * PI/180) * PLAYER_SPEED;
-  float new_pos_yf = player->pos_y - cos(player->angle * PI/180) * PLAYER_SPEED;
-  uint16_t new_pos_xi = (uint16_t)floor(new_pos_xf);
-  uint16_t new_pos_yi = (uint16_t)floor(new_pos_yf);
+void movePlayerForward(Player *p) {
+  float new_pos_xf = p->pos_x + sin(p->angle * PI/180) * PLAYER_SPEED;
+  float new_pos_yf = p->pos_y - cos(p->angle * PI/180) * PLAYER_SPEED;
+  uint16_t new_pos_xi = (uint16_t)new_pos_xf;
+  uint16_t new_pos_yi = (uint16_t)new_pos_yf;
 
-  if(check_player_collision(&new_pos_xi, &new_pos_yi)) { return; }
+  if(player_has_collided(p, &new_pos_xi, &new_pos_yi)) { return; }
 
   //Move player
-  player->pos_x = new_pos_xf;
-  player->pos_y = new_pos_yf;
+  p->pos_x = new_pos_xf;
+  p->pos_y = new_pos_yf;
 }
 
-void movePlayerBackward(Player *player) {
-  float new_pos_xf = player->pos_x - sin(player->angle * PI/180) * PLAYER_SPEED;
-  float new_pos_yf = player->pos_y + cos(player->angle * PI/180) * PLAYER_SPEED;
-  uint16_t new_pos_xi = (uint16_t)floor(new_pos_xf);
-  uint16_t new_pos_yi = (uint16_t)floor(new_pos_yf);
+void movePlayerBackward(Player *p) {
+  float new_pos_xf = p->pos_x - sin(p->angle * PI/180) * PLAYER_SPEED;
+  float new_pos_yf = p->pos_y + cos(p->angle * PI/180) * PLAYER_SPEED;
+  uint16_t new_pos_xi = (uint16_t)new_pos_xf;
+  uint16_t new_pos_yi = (uint16_t)new_pos_yf;
 
-  if(check_player_collision(&new_pos_xi, &new_pos_yi)) { return; }
+  if(player_has_collided(p, &new_pos_xi, &new_pos_yi)) { return; }
 
   //Move player
-  player->pos_x = new_pos_xf;
-  player->pos_y = new_pos_yf;
+  p->pos_x = new_pos_xf;
+  p->pos_y = new_pos_yf;
 }
 
 /* Bullet logic */
