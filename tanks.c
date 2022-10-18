@@ -92,6 +92,7 @@ enum host_packet_type {
   HOST_STATE_FLAG,
   HOST_PLAYER_JOINED_FLAG,
   HOST_PLAYER_LEFT_FLAG,
+  HOST_PLAYER_HIT_FLAG,
   HOST_NEW_BULLET_FLAG
 };
 
@@ -429,6 +430,12 @@ void poll_enet_client() {
           uint8_t id = data[1];
           if (delete_player(&id) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
         }
+        else if (data[0] == HOST_PLAYER_HIT_FLAG) {
+          uint8_t id_hit = data[1];
+          uint8_t id_shooter = data[2];
+
+          printf("Player %d was shot by player %d\n", id_hit, id_shooter);
+        }
         else if (data[0] == HOST_NEW_BULLET_FLAG) {
           uint8_t id = data[1];
           uint8_t data_index = 2;
@@ -522,6 +529,28 @@ void send_enet_server_new_bullet(Player *player, Bullet *bullet) {
   memcpy(&data[data_index], &pos_y, sizeof(uint16_t));
   data_index += 2;
   memcpy(&data[data_index], &angle, sizeof(int16_t));
+
+  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
+  enet_host_broadcast(app.server, 0, packet);
+
+  //Cleanup
+  free(data);
+}
+
+void send_enet_server_player_hit(Player *p_hit, Player *p_shooter) {
+  /* PACKET STRUCTURE
+  ----------------------------
+  |  flag  |p_hit_id|p_sht_id|
+  ----------------------------
+  */
+
+  // Create memory block containing id of player that was hit and the shooter
+  int sizeof_data = 3 * sizeof(uint8_t);
+  uint8_t *data = malloc(sizeof_data);
+
+  data[0] = HOST_PLAYER_HIT_FLAG;
+  data[1] = p_hit->id;
+  data[2] = p_shooter->id;
 
   ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_host_broadcast(app.server, 0, packet);
@@ -857,7 +886,7 @@ void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, int16_t angle)
   if (app.server) { send_enet_server_new_bullet(player, &bullet); } //Broadcast to clients if server
 }
 
-uint8_t bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
+Player *bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
   //Check other player collisions
   for (int i = 0; i < app.number_of_players; i++) {
     if (p->id == app.players[i].id) { continue; } //Ignore self
@@ -870,10 +899,10 @@ uint8_t bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_b
     //Create tank rectangle
     SDL_Rect rect_bullet = {*pos_x_bullet, *pos_y_bullet, BULLET_SIZE, BULLET_SIZE};
 
-    if (SDL_HasIntersection(&rect_other, &rect_bullet) == SDL_TRUE) { return 1; }
+    if (SDL_HasIntersection(&rect_other, &rect_bullet) == SDL_TRUE) { return &app.players[i]; }
   }
 
-  return 0;
+  return NULL;
 }
 
 void update_bullet_positions(Player *p) {
@@ -887,9 +916,10 @@ void update_bullet_positions(Player *p) {
     uint16_t new_pos_yi = new_pos_yf;
 
     //Check if bullet hit a player
-    if (bullet_has_collided(p, &new_pos_xi, &new_pos_yi)) {
+    Player *player_hit = bullet_has_collided(p, &new_pos_xi, &new_pos_yi);
+    if (player_hit != NULL) {
+      if (app.server) { send_enet_server_player_hit(player_hit, p); }
       bullet_dequeue(&p->bullet_queue, &p->bullet_queue.bullets[index]);
-      printf("Bullet hit a tank!\n");
     }
 
     //Move bullet
