@@ -68,7 +68,7 @@ typedef struct {
   uint8_t map[MAP_HEIGHT][MAP_WIDTH];
   Player *local_player;
   Player players[15];
-  uint8_t number_of_players;
+  uint8_t num_of_players;
   uint8_t current_id;
   uint8_t is_running;
   uint8_t up;
@@ -107,12 +107,12 @@ Player *get_player_by_id(uint8_t);
 App app = {0};
 
 void cleanup() {
-  if (app.window) { SDL_DestroyWindow(app.window); }
-  if (app.renderer) { SDL_DestroyRenderer(app.renderer); }
-  if (app.local_player->texture) { SDL_DestroyTexture(app.local_player->texture); }
-  if (app.server) { enet_host_destroy(app.server); }
-  if (app.client) { enet_host_destroy(app.client); }
-  if (app.enet_initialized) { enet_deinitialize(); }
+  if (app.window) SDL_DestroyWindow(app.window);
+  if (app.renderer) SDL_DestroyRenderer(app.renderer);
+  if (app.local_player->texture) SDL_DestroyTexture(app.local_player->texture);
+  if (app.server) enet_host_destroy(app.server);
+  if (app.client) enet_host_destroy(app.client);
+  if (app.enet_initialized) enet_deinitialize();
 
   SDL_Quit();
 }
@@ -158,21 +158,23 @@ int init_client() {
 
 void host_send_position(ENetPeer *peer) {
   /* PACKET STRUCTURE */
-  /*       |------------*number of players------------|
-  -----------------------------------------------------
-  |  flag  |  p_id  |     pos_x      |     pos_y      |
-  -----------------------------------------------------
+  /*                |------------*number of players------------|
+  --------------------------------------------------------------
+  |  flag  | num_p  |  p_id  |     pos_x      |     pos_y      |
+  --------------------------------------------------------------
   */
 
   // Create memory block containing the player positions
-  int sizeof_data = 2 * sizeof(uint8_t) + app.number_of_players * (sizeof(uint8_t) + 2 * sizeof(uint16_t));
+  int sizeof_data = 2 * sizeof(uint8_t);
+  sizeof_data += app.num_of_players * (sizeof(uint8_t) + 2 * sizeof(uint16_t));
   uint8_t *data = malloc(sizeof_data);
+  ENetPacket *packet;
 
   data[0] = HOST_POSITION_FLAG;
-  data[1] = app.number_of_players;
+  data[1] = app.num_of_players;
   int position_index = 2;
 
-  for (uint8_t i = 0; i < app.number_of_players; i++) {
+  for (uint8_t i = 0; i < app.num_of_players; i++) {
     uint16_t id = (uint8_t)app.players[i].id;
     uint16_t pos_x = (uint16_t)app.players[i].pos_x;
     uint16_t pos_y = (uint16_t)app.players[i].pos_y;
@@ -185,7 +187,7 @@ void host_send_position(ENetPeer *peer) {
     position_index += 2;
   }
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
   enet_peer_send(peer, 0, packet);
 
   // Cleanup
@@ -203,13 +205,14 @@ void host_send_map(ENetPeer *peer) {
   // Create memory block containing the map array
   int sizeof_data = sizeof(uint8_t) + sizeof(app.map);
   uint8_t *data = malloc(sizeof_data);
+  ENetPacket *packet;
 
   data[0] = HOST_MAP_FLAG;
   int position_index = 1;
 
   memcpy(&data[position_index], &app.map, sizeof(app.map));
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
   enet_peer_send(peer, 0, packet);
 
   // Cleanup
@@ -226,19 +229,20 @@ void host_send_player_joined() {
   // Create memory block containing the player positions
   int sizeof_data = 2 * sizeof(uint8_t) + 2 * sizeof(uint16_t);
   uint8_t *data = malloc(sizeof_data);
+  ENetPacket *packet;
 
   data[0] = HOST_PLAYER_JOINED_FLAG;
-  data[1] = app.players[app.number_of_players - 1].id;
+  data[1] = app.players[app.num_of_players - 1].id;
   int position_index = 2;
 
-  uint16_t pos_x = (uint16_t)app.players[app.number_of_players - 1].pos_x;
-  uint16_t pos_y = (uint16_t)app.players[app.number_of_players - 1].pos_y;
+  uint16_t pos_x = (uint16_t)app.players[app.num_of_players - 1].pos_x;
+  uint16_t pos_y = (uint16_t)app.players[app.num_of_players - 1].pos_y;
 
   memcpy(&data[position_index], &pos_x, sizeof(uint16_t));
   position_index += 2;
   memcpy(&data[position_index], &pos_y, sizeof(uint16_t));
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
   enet_host_broadcast(app.server, 0, packet);
 
   // Cleanup
@@ -255,11 +259,12 @@ void host_send_player_left(uint8_t *id) {
   // Create memory block containing the player id
   int sizeof_data = 2 * sizeof(uint8_t);
   uint8_t *data = malloc(sizeof_data);
+  ENetPacket *packet;
 
   data[0] = HOST_PLAYER_LEFT_FLAG;
   data[1] = *id;
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
   enet_host_broadcast(app.server, 0, packet);
 
   // Cleanup
@@ -274,7 +279,8 @@ int connect_to_host() {
     return EXIT_FAILURE;
   }
 
-  if (enet_host_service(app.client, &app.event, 5000) > 0 && app.event.type == ENET_EVENT_TYPE_CONNECT) {
+  int res = enet_host_service(app.client, &app.event, 5000);
+  if (res > 0 && app.event.type == ENET_EVENT_TYPE_CONNECT) {
     printf("Successfully connected to host.\n");
 
     return 0;
@@ -315,7 +321,8 @@ void poll_enet_server() {
         memcpy(app.event.peer->data, &app.current_id, sizeof(uint8_t));
 
         //Create player
-        if (create_player(&app.players[app.number_of_players], app.current_id, 0, 0) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+        uint8_t player = create_player(&app.players[app.num_of_players], app.current_id, 0, 0);
+        if (player == EXIT_FAILURE) { exit(EXIT_FAILURE); }
 
         host_send_position(app.event.peer); //Send player position to client
         host_send_map(app.event.peer); //Send map to client
@@ -361,11 +368,11 @@ void poll_enet_client() {
         uint8_t *data = (uint8_t *)app.event.packet->data;
 
         if (data[0] == HOST_POSITION_FLAG) {
-          uint8_t number_of_players = data[1];
+          uint8_t num_of_players = data[1];
           int data_index = 2;
 
           //Create players
-          for (uint8_t i = 0; i < number_of_players; i++) {
+          for (uint8_t i = 0; i < num_of_players; i++) {
             uint8_t id;
             uint16_t pos_x;
             uint16_t pos_y;
@@ -380,7 +387,7 @@ void poll_enet_client() {
             if (create_player(&app.players[i], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
           }
 
-          app.local_player = &app.players[app.number_of_players - 1]; //Last player in app.players is local_player
+          app.local_player = &app.players[app.num_of_players - 1]; //Last player in app.players is local_player
           printf("Your id is: %d\n", app.local_player->id);
         }
         else if (data[0] == HOST_MAP_FLAG) {
@@ -392,7 +399,7 @@ void poll_enet_client() {
         else if (data[0] == HOST_STATE_FLAG) {
           int data_index = 1;
 
-          for (uint8_t i = 0; i < app.number_of_players; i++) {
+          for (uint8_t i = 0; i < app.num_of_players; i++) {
             //Update player positions
             uint16_t pos_x;
             uint16_t pos_y;
@@ -424,7 +431,7 @@ void poll_enet_client() {
           data_index += 2;
           memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
 
-          if (create_player(&app.players[app.number_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+          if (create_player(&app.players[app.num_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
         }
         else if (data[0] == HOST_PLAYER_LEFT_FLAG) {
           uint8_t id = data[1];
@@ -478,13 +485,13 @@ void send_enet_server() {
   */
 
   // Create memory block containing all player positions
-  int sizeof_data = 1 * sizeof(uint8_t) + 3 * app.number_of_players * sizeof(uint16_t);
+  int sizeof_data = 1 * sizeof(uint8_t) + 3 * app.num_of_players * sizeof(uint16_t);
   uint8_t *data = malloc(sizeof_data);
   uint8_t data_index = 1;
 
   data[0] = HOST_STATE_FLAG;
 
-  for (uint8_t i = 0; i < app.number_of_players; i++) {
+  for (uint8_t i = 0; i < app.num_of_players; i++) {
     uint16_t pos_x = app.players[i].pos_x;
     uint16_t pos_y = app.players[i].pos_y;
     int16_t angle = app.players[i].angle;
@@ -720,7 +727,7 @@ int create_player(Player *player, uint8_t id, uint16_t pos_x, uint16_t pos_y) {
     return EXIT_FAILURE;
   }
 
-  app.number_of_players++; //Increase number of players
+  app.num_of_players++; //Increase number of players
   app.current_id++; //Increase current id
 
   return 0;
@@ -729,13 +736,13 @@ int create_player(Player *player, uint8_t id, uint16_t pos_x, uint16_t pos_y) {
 int delete_player(uint8_t *id) {
   uint8_t local_player_id = app.local_player->id;
 
-  for (uint8_t i = 0; i < app.number_of_players; i++) {
+  for (uint8_t i = 0; i < app.num_of_players; i++) {
     if (app.players[i].id == *id) {
-      for (uint8_t j = i; j < app.number_of_players - 1; j++) {
+      for (uint8_t j = i; j < app.num_of_players - 1; j++) {
         app.players[j] = app.players[j + 1];
       }
 
-      app.number_of_players--; //Decrement number of players
+      app.num_of_players--; //Decrement number of players
 
       //Update local player pointer
       Player *local_player = get_player_by_id(local_player_id);
@@ -750,7 +757,7 @@ int delete_player(uint8_t *id) {
 Player *get_player_by_id(uint8_t id) {
   Player *player;
 
-  for (uint8_t i = 0; i < app.number_of_players; i++) {
+  for (uint8_t i = 0; i < app.num_of_players; i++) {
     if (app.players[i].id == id) {
       player = &app.players[i];
       return player;
@@ -779,7 +786,7 @@ uint8_t player_has_collided(Player *p, uint16_t *pos_x_tank, uint16_t *pos_y_tan
   }
 
   //Check other player collisions
-  for (int i = 0; i < app.number_of_players; i++) {
+  for (int i = 0; i < app.num_of_players; i++) {
     if (p->id == app.players[i].id) { continue; } //Ignore self
 
     //Create other player rectangle
@@ -888,7 +895,7 @@ void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, int16_t angle)
 
 Player *bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
   //Check other player collisions
-  for (int i = 0; i < app.number_of_players; i++) {
+  for (int i = 0; i < app.num_of_players; i++) {
     if (p->id == app.players[i].id) { continue; } //Ignore self
 
     //Create other player rectangle
@@ -956,7 +963,7 @@ int load() {
 }
 
 void update() {
-  if (!app.number_of_players) { return; } //Skip if no players
+  if (!app.num_of_players) { return; } //Skip if no players
 
   if (app.up) { movePlayerForward(app.local_player); };
   if (app.down) { movePlayerBackward(app.local_player); };
@@ -964,13 +971,13 @@ void update() {
   if (app.right) { app.local_player->angle = (app.local_player->angle + PLAYER_ROTATION_SPEED) % 360; };
   if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.local_player, 0, 0, 0); app.button_a_is_down = 1; };
 
-  for (uint8_t i = 0; i < app.number_of_players; i++) {
+  for (uint8_t i = 0; i < app.num_of_players; i++) {
     update_bullet_positions(&app.players[i]);
   }
 }
 
 void draw() {
-  if (!app.number_of_players) { return; } //Skip if no players
+  if (!app.num_of_players) { return; } //Skip if no players
 
   //Draw background
   SDL_SetRenderDrawColor(app.renderer, 25, 25, 25, 255);
@@ -978,7 +985,7 @@ void draw() {
 
   draw_map(); //Draw map
 
-  for (int i = 0; i < app.number_of_players; i++) {
+  for (int i = 0; i < app.num_of_players; i++) {
     drawPlayer(&app.players[i]); //Draw player
     drawBullets(&app.players[i]); //Draw bullets
   }
