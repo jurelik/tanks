@@ -83,17 +83,17 @@ typedef struct {
 
 /* ENUMS */
 enum client_packet_type {
-  CLIENT_STATE_FLAG
+  CLIENT_STATE_PACKET
 };
 
 enum host_packet_type {
-  HOST_POSITION_FLAG,
-  HOST_MAP_FLAG,
-  HOST_STATE_FLAG,
-  HOST_PLAYER_JOINED_FLAG,
-  HOST_PLAYER_LEFT_FLAG,
-  HOST_PLAYER_HIT_FLAG,
-  HOST_NEW_BULLET_FLAG
+  HOST_POSITION_PACKET,
+  HOST_MAP_PACKET,
+  HOST_STATE_PACKET,
+  HOST_PLAYER_JOINED_PACKET,
+  HOST_PLAYER_LEFT_PACKET,
+  HOST_PLAYER_HIT_PACKET,
+  HOST_NEW_BULLET_PACKET
 };
 
 /* FUNCTION DEFINITIONS */
@@ -170,7 +170,7 @@ void host_send_position(ENetPeer *peer) {
   uint8_t *data = malloc(sizeof_data);
   ENetPacket *packet;
 
-  data[0] = HOST_POSITION_FLAG;
+  data[0] = HOST_POSITION_PACKET;
   data[1] = app.num_of_players;
   int position_index = 2;
 
@@ -207,7 +207,7 @@ void host_send_map(ENetPeer *peer) {
   uint8_t *data = malloc(sizeof_data);
   ENetPacket *packet;
 
-  data[0] = HOST_MAP_FLAG;
+  data[0] = HOST_MAP_PACKET;
   int position_index = 1;
 
   memcpy(&data[position_index], &app.map, sizeof(app.map));
@@ -231,7 +231,7 @@ void host_send_player_joined() {
   uint8_t *data = malloc(sizeof_data);
   ENetPacket *packet;
 
-  data[0] = HOST_PLAYER_JOINED_FLAG;
+  data[0] = HOST_PLAYER_JOINED_PACKET;
   data[1] = app.players[app.num_of_players - 1].id;
   int position_index = 2;
 
@@ -261,7 +261,7 @@ void host_send_player_left(uint8_t *id) {
   uint8_t *data = malloc(sizeof_data);
   ENetPacket *packet;
 
-  data[0] = HOST_PLAYER_LEFT_FLAG;
+  data[0] = HOST_PLAYER_LEFT_PACKET;
   data[1] = *id;
 
   packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_RELIABLE);
@@ -332,7 +332,7 @@ void handle_host_event_connect() {
 void handle_host_event_receive() {
   uint8_t *data = (uint8_t *)app.event.packet->data;
 
-  if (data[0] == CLIENT_STATE_FLAG) {
+  if (data[0] == CLIENT_STATE_PACKET) {
     uint8_t *player_ID = (uint8_t *)app.event.peer->data;
     Player *player = get_player_by_id(*player_ID);
 
@@ -375,104 +375,121 @@ void poll_enet_host() {
   }
 }
 
-void handle_client_event_receive() {
-  uint8_t *data = (uint8_t *)app.event.packet->data;
+void handle_client_packet_position(uint8_t *data) {
+  uint8_t num_of_players = data[1];
+  int data_index = 2;
 
-  if (data[0] == HOST_POSITION_FLAG) {
-    uint8_t num_of_players = data[1];
-    int data_index = 2;
+  //Create players
+  for (uint8_t i = 0; i < num_of_players; i++) {
+    uint8_t id;
+    uint16_t pos_x;
+    uint16_t pos_y;
 
-    //Create players
-    for (uint8_t i = 0; i < num_of_players; i++) {
-      uint8_t id;
-      uint16_t pos_x;
-      uint16_t pos_y;
+    memcpy(&id, &data[data_index], sizeof(uint8_t));
+    data_index += 1;
+    memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+    data_index += 2;
+    memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+    data_index += 2;
 
-      memcpy(&id, &data[data_index], sizeof(uint8_t));
-      data_index += 1;
-      memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
-      data_index += 2;
-      memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
-      data_index += 2;
-
-      uint8_t res = create_player(&app.players[i], id, pos_x, pos_y);
-      if (res == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-    }
-
-    app.local_player = &app.players[app.num_of_players - 1]; //Last player in app.players is local_player
-    printf("Your id is: %d\n", app.local_player->id);
+    uint8_t res = create_player(&app.players[i], id, pos_x, pos_y);
+    if (res == EXIT_FAILURE) { exit(EXIT_FAILURE); }
   }
-  else if (data[0] == HOST_MAP_FLAG) {
+
+  //Last player in app.players is local_player
+  app.local_player = &app.players[app.num_of_players - 1];
+  printf("Your id is: %d\n", app.local_player->id);
+}
+
+void handle_client_packet_map(uint8_t *data) {
     int data_index = 1;
 
     //Copy map data
     memcpy(&app.map, &data[data_index], MAP_HEIGHT * MAP_WIDTH);
-  }
-  else if (data[0] == HOST_STATE_FLAG) {
-    int data_index = 1;
+}
 
-    for (uint8_t i = 0; i < app.num_of_players; i++) {
-      //Update player positions
-      uint16_t pos_x;
-      uint16_t pos_y;
-      int16_t angle;
-      memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
-      data_index += 2;
-      memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
-      data_index += 2;
-      memcpy(&angle, &data[data_index], sizeof(int16_t));
-      data_index += 2;
+void handle_client_packet_state(uint8_t *data) {
+  int data_index = 1;
 
-      app.players[i].pos_x = pos_x;
-      app.players[i].pos_y = pos_y;
-      app.players[i].angle = angle;
-    }
-  }
-  else if (data[0] == HOST_PLAYER_JOINED_FLAG) {
-    uint8_t id = data[1];
-    uint8_t data_index = 2;
-    uint16_t pos_x;
-    uint16_t pos_y;
-
-    //When a new player joins they receive a HOST_POSITION_FLAG
-    //packet privately & HOST_PLAYER_JOINED_FLAG packet via broadcast
-    //so they need to ignore the HOST_PLAYER_JOINED_FLAG
-    if (get_player_by_id(id)) return; //Ignore if player with the same id already exists
-
-    memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
-    data_index += 2;
-    memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
-
-    if (create_player(&app.players[app.num_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-  }
-  else if (data[0] == HOST_PLAYER_LEFT_FLAG) {
-    uint8_t id = data[1];
-    if (delete_player(&id) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-  }
-  else if (data[0] == HOST_PLAYER_HIT_FLAG) {
-    uint8_t id_hit = data[1];
-    uint8_t id_shooter = data[2];
-
-    printf("Player %d was shot by player %d\n", id_hit, id_shooter);
-  }
-  else if (data[0] == HOST_NEW_BULLET_FLAG) {
-    uint8_t id = data[1];
-    uint8_t data_index = 2;
+  for (uint8_t i = 0; i < app.num_of_players; i++) {
+    //Update player positions
     uint16_t pos_x;
     uint16_t pos_y;
     int16_t angle;
-
-    if (id == app.local_player->id) return; //Ignore if own bullet
-    Player *player = get_player_by_id(id);
-
     memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
     data_index += 2;
     memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
     data_index += 2;
     memcpy(&angle, &data[data_index], sizeof(int16_t));
+    data_index += 2;
 
-    shoot_bullet(player, pos_x, pos_y, angle);
+    app.players[i].pos_x = pos_x;
+    app.players[i].pos_y = pos_y;
+    app.players[i].angle = angle;
   }
+}
+
+void handle_client_packet_player_joined(uint8_t *data) {
+  uint8_t id = data[1];
+  uint8_t data_index = 2;
+  uint16_t pos_x;
+  uint16_t pos_y;
+
+  //When a new player joins they receive a HOST_POSITION_PACKET
+  //packet privately & HOST_PLAYER_JOINED_PACKET packet via broadcast
+  //so they need to ignore the HOST_PLAYER_JOINED_PACKET
+  if (get_player_by_id(id)) return;
+
+  memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+  data_index += 2;
+  memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+
+  Player *player = &app.players[app.num_of_players];
+  uint8_t res = create_player(player, id, pos_x, pos_y);
+  if (res == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+}
+
+void handle_client_packet_player_left(uint8_t *data) {
+  uint8_t id = data[1];
+  if (delete_player(&id) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+}
+
+void handle_client_packet_player_hit(uint8_t *data) {
+  uint8_t id_hit = data[1];
+  uint8_t id_shooter = data[2];
+
+  printf("Player %d was shot by player %d\n", id_hit, id_shooter);
+}
+
+void handle_client_packet_new_bullet(uint8_t *data) {
+  uint8_t id = data[1];
+  uint8_t data_index = 2;
+  uint16_t pos_x;
+  uint16_t pos_y;
+  int16_t angle;
+
+  if (id == app.local_player->id) return; //Ignore if own bullet
+  Player *player = get_player_by_id(id);
+
+  memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+  data_index += 2;
+  memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+  data_index += 2;
+  memcpy(&angle, &data[data_index], sizeof(int16_t));
+
+  shoot_bullet(player, pos_x, pos_y, angle);
+}
+
+void handle_client_event_receive() {
+  uint8_t *data = (uint8_t *)app.event.packet->data;
+
+  if (data[0] == HOST_POSITION_PACKET) handle_client_packet_position(data);
+  else if (data[0] == HOST_MAP_PACKET) handle_client_packet_map(data);
+  else if (data[0] == HOST_STATE_PACKET) handle_client_packet_state(data);
+  else if (data[0] == HOST_PLAYER_JOINED_PACKET) handle_client_packet_player_joined(data);
+  else if (data[0] == HOST_PLAYER_LEFT_PACKET) handle_client_packet_player_left(data);
+  else if (data[0] == HOST_PLAYER_HIT_PACKET) handle_client_packet_player_hit(data);
+  else if (data[0] == HOST_NEW_BULLET_PACKET) handle_client_packet_new_bullet(data);
 }
 
 void poll_enet_client() {
@@ -484,7 +501,7 @@ void poll_enet_client() {
         handle_client_event_receive();
         break;
       case ENET_EVENT_TYPE_DISCONNECT:
-        printf("Client disconnected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
+        printf("Player %d disconnected.\n", *(uint8_t *)app.event.peer->data);
         break;
       case ENET_EVENT_TYPE_NONE:
         break;
@@ -497,7 +514,7 @@ void poll_enet() {
   else if (app.client) { poll_enet_client(); }
 }
 
-void send_enet_host() {
+void send_enet_host_state() {
   /* PACKET STRUCTURE */
   /*       |----------------*number of players----------------|
   -------------------------------------------------------------
@@ -506,11 +523,12 @@ void send_enet_host() {
   */
 
   // Create memory block containing all player positions
-  int sizeof_data = 1 * sizeof(uint8_t) + 3 * app.num_of_players * sizeof(uint16_t);
+  int sizeof_data = sizeof(uint8_t) + 3 * app.num_of_players * sizeof(uint16_t);
   uint8_t *data = malloc(sizeof_data);
   uint8_t data_index = 1;
+  ENetPacket *packet;
 
-  data[0] = HOST_STATE_FLAG;
+  data[0] = HOST_STATE_PACKET;
 
   for (uint8_t i = 0; i < app.num_of_players; i++) {
     uint16_t pos_x = app.players[i].pos_x;
@@ -525,7 +543,7 @@ void send_enet_host() {
     data_index += 2;
   }
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_host_broadcast(app.server, 0, packet);
 
   //Cleanup
@@ -543,8 +561,9 @@ void send_enet_host_new_bullet(Player *player, Bullet *bullet) {
   int sizeof_data = 2 * sizeof(uint8_t) + 3 * sizeof(uint16_t);
   uint8_t *data = malloc(sizeof_data);
   uint8_t data_index = 1;
+  ENetPacket *packet;
 
-  data[0] = HOST_NEW_BULLET_FLAG;
+  data[0] = HOST_NEW_BULLET_PACKET;
   memcpy(&data[data_index], &player->id, sizeof(uint8_t));
   data_index += 1;
 
@@ -558,7 +577,7 @@ void send_enet_host_new_bullet(Player *player, Bullet *bullet) {
   data_index += 2;
   memcpy(&data[data_index], &angle, sizeof(int16_t));
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_host_broadcast(app.server, 0, packet);
 
   //Cleanup
@@ -575,19 +594,20 @@ void send_enet_host_player_hit(Player *p_hit, Player *p_shooter) {
   // Create memory block containing id of player that was hit and the shooter
   int sizeof_data = 3 * sizeof(uint8_t);
   uint8_t *data = malloc(sizeof_data);
+  ENetPacket *packet;
 
-  data[0] = HOST_PLAYER_HIT_FLAG;
+  data[0] = HOST_PLAYER_HIT_PACKET;
   data[1] = p_hit->id;
   data[2] = p_shooter->id;
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_host_broadcast(app.server, 0, packet);
 
   //Cleanup
   free(data);
 }
 
-void send_enet_client() {
+void send_enet_client_state() {
   /* PACKET STRUCTURE
   ----------------------------------------------------------------
   |  flag  |   up   |  down  |  left  | right  | but_a  | but_b  |
@@ -597,8 +617,9 @@ void send_enet_client() {
   // Create memory block containing the local app state
   int sizeof_data = 7 * sizeof(uint8_t);
   uint8_t *data = malloc(sizeof_data);
+  ENetPacket *packet;
 
-  data[0] = CLIENT_STATE_FLAG;
+  data[0] = CLIENT_STATE_PACKET;
   data[1] = app.up;
   data[2] = app.down;
   data[3] = app.left;
@@ -606,7 +627,7 @@ void send_enet_client() {
   data[5] = app.button_a;
   data[6] = app.button_b;
 
-  ENetPacket *packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
+  packet = enet_packet_create(data, sizeof_data, ENET_PACKET_FLAG_UNSEQUENCED);
   enet_peer_send(app.peer, 0, packet);
 
   // Cleanup
@@ -614,12 +635,12 @@ void send_enet_client() {
 }
 
 void send_enet() {
-  if (app.server) { send_enet_host(); }
-  else if (app.client) { send_enet_client(); }
+  if (app.server) { send_enet_host_state(); }
+  else if (app.client) { send_enet_client_state(); }
 }
 
 /* SDL Logic */
-int init_SDL() {
+uint8_t init_SDL() {
   //Init SDL
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
     fprintf(stderr, "Failed to initialize SDL: %s\n", SDL_GetError());
@@ -650,22 +671,29 @@ int init_SDL() {
 }
 
 void handleKeyDown(SDL_KeyboardEvent *event) {
+  int scancode = event->keysym.scancode;
+
   if (event->repeat != 0) { return; };
-  if (event->keysym.scancode == SDL_SCANCODE_UP) { app.up = 1; };
-  if (event->keysym.scancode == SDL_SCANCODE_DOWN) { app.down = 1; };
-  if (event->keysym.scancode == SDL_SCANCODE_LEFT) { app.left = 1; };
-  if (event->keysym.scancode == SDL_SCANCODE_RIGHT) { app.right = 1; };
-  if (event->keysym.scancode == SDL_SCANCODE_Z) { app.button_a = 1; };
-  if (event->keysym.scancode == SDL_SCANCODE_X) { app.button_b = 1; };
+  if (scancode == SDL_SCANCODE_UP) app.up = 1;
+  if (scancode == SDL_SCANCODE_DOWN) app.down = 1;
+  if (scancode == SDL_SCANCODE_LEFT) app.left = 1;
+  if (scancode == SDL_SCANCODE_RIGHT) app.right = 1;
+  if (scancode == SDL_SCANCODE_Z) app.button_a = 1;
+  if (scancode == SDL_SCANCODE_X) app.button_b = 1;
 }
 
 void handleKeyUp(SDL_KeyboardEvent *event) {
-  if (event->keysym.scancode == SDL_SCANCODE_UP) { app.up = 0; };
-  if (event->keysym.scancode == SDL_SCANCODE_DOWN) { app.down = 0; };
-  if (event->keysym.scancode == SDL_SCANCODE_LEFT) { app.left = 0; };
-  if (event->keysym.scancode == SDL_SCANCODE_RIGHT) { app.right = 0; };
-  if (event->keysym.scancode == SDL_SCANCODE_Z) { app.button_a = 0; app.button_a_is_down = 0; };
-  if (event->keysym.scancode == SDL_SCANCODE_X) { app.button_b = 0; };
+  int scancode = event->keysym.scancode;
+
+  if (scancode == SDL_SCANCODE_UP) app.up = 0;
+  if (scancode == SDL_SCANCODE_DOWN) app.down = 0;
+  if (scancode == SDL_SCANCODE_LEFT) app.left = 0;
+  if (scancode == SDL_SCANCODE_RIGHT) app.right = 0;
+  if (scancode == SDL_SCANCODE_Z) {
+    app.button_a = 0;
+    app.button_a_is_down = 0;
+  }
+  if (scancode == SDL_SCANCODE_X) app.button_b = 0;
 }
 
 void poll_events() {
@@ -697,7 +725,9 @@ SDL_Texture *loadTexture(char *filename) {
 //Copy texture to a rectangle
 void blit(SDL_Texture *texture, int x, int y, int16_t angle) {
   SDL_Rect dest = { x, y };
-  SDL_QueryTexture(texture, NULL, NULL, &dest.w, &dest.h); //Get texture width/height and apply to dest
+
+  //Get texture width/height and apply to dest
+  SDL_QueryTexture(texture, NULL, NULL, &dest.w, &dest.h);
   SDL_RenderCopyEx(app.renderer, texture, NULL, &dest, angle, NULL, SDL_FLIP_NONE);
 }
 
@@ -788,7 +818,7 @@ Player *get_player_by_id(uint8_t id) {
   return NULL;
 }
 
-uint8_t player_has_collided(Player *p, uint16_t *pos_x_tank, uint16_t *pos_y_tank) {
+uint8_t player_collided(Player *p, uint16_t *pos_x_tank, uint16_t *pos_y_tank) {
   //Check map collisions
   for (int i = 0; i < MAP_HEIGHT; i++) {
     for (int j = 0; j < MAP_WIDTH; j++) {
@@ -838,7 +868,7 @@ void movePlayerForward(Player *p) {
   uint16_t new_pos_xi = (uint16_t)new_pos_xf;
   uint16_t new_pos_yi = (uint16_t)new_pos_yf;
 
-  if(player_has_collided(p, &new_pos_xi, &new_pos_yi)) { return; }
+  if(player_collided(p, &new_pos_xi, &new_pos_yi)) { return; }
 
   //Move player
   p->pos_x = new_pos_xf;
@@ -851,7 +881,7 @@ void movePlayerBackward(Player *p) {
   uint16_t new_pos_xi = (uint16_t)new_pos_xf;
   uint16_t new_pos_yi = (uint16_t)new_pos_yf;
 
-  if(player_has_collided(p, &new_pos_xi, &new_pos_yi)) { return; }
+  if(player_collided(p, &new_pos_xi, &new_pos_yi)) { return; }
 
   //Move player
   p->pos_x = new_pos_xf;
@@ -868,14 +898,14 @@ int bullet_queue_is_empty(Bullet_queue *bullet_queue) {
 }
 
 void bullet_dequeue(Bullet_queue *bullet_queue, Bullet *bullet) {
-  if (bullet_queue_is_empty(bullet_queue)) { return; }
+  if (bullet_queue_is_empty(bullet_queue)) return;
 
   bullet_queue->front = (bullet_queue->front + 1) % BULLET_AMOUNT;
   bullet_queue->size--;
 }
 
 void bullet_enqueue(Bullet_queue *bullet_queue, Bullet *bullet) {
-  if (bullet_queue_is_full(bullet_queue)) { bullet_dequeue(bullet_queue, bullet); }
+  if (bullet_queue_is_full(bullet_queue)) bullet_dequeue(bullet_queue, bullet);
 
   bullet_queue->bullets[bullet_queue->back] = *bullet;
   bullet_queue->back = (bullet_queue->back + 1) % BULLET_AMOUNT;
@@ -889,35 +919,43 @@ uint8_t bullet_timeout(Bullet *bullet) {
 
   gettimeofday(&now, NULL);
 
-  //Combine seconds & microseconds for a precise result (microseconds loop otherwise)
-  time_created_full = bullet->time_created.tv_sec * 1000000 + bullet->time_created.tv_usec;
+  //Combine seconds & microseconds for a precise result
+  //(microseconds loop otherwise)
+  time_created_full = bullet->time_created.tv_sec * 1000000;
+  time_created_full += bullet->time_created.tv_usec;
+
   time_now_full = now.tv_sec * 1000000 + now.tv_usec;
 
-  if ((time_now_full - time_created_full) / 1000000 >= BULLET_TIMEOUT) { return 1; }
+  if ((time_now_full - time_created_full) / 1000000 >= BULLET_TIMEOUT) return 1;
   return 0;
 }
 
-void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, int16_t angle) {
+void shoot_bullet(Player *p, uint16_t pos_x, uint16_t pos_y, int16_t angle) {
   //Get player width & height
-  int playerW, playerH;
-  SDL_QueryTexture(player->texture, NULL, NULL, &playerW, &playerH);
+  int p_width, p_height;
+  SDL_QueryTexture(p->texture, NULL, NULL, &p_width, &p_height);
 
   //Create bullet
   Bullet bullet = {0};
-  if (pos_x) { bullet.pos_x = pos_x; } else { bullet.pos_x = (uint16_t)player->pos_x + playerW / 2 - (BULLET_SIZE / 2 - 1); }
-  if (pos_y) { bullet.pos_y = pos_y; } else { bullet.pos_y = (uint16_t)player->pos_y + playerH / 2 - (BULLET_SIZE / 2 - 1); }
-  if (angle) { bullet.angle = angle; } else { bullet.angle = player->angle; }
+  if (!pos_x) pos_x = (uint16_t)p->pos_x + p_width / 2 - (BULLET_SIZE / 2 - 1);
+  if (!pos_y) pos_y = (uint16_t)p->pos_y + p_height / 2 - (BULLET_SIZE / 2 - 1);
+  if (!angle) angle = p->angle;
+
+  bullet.pos_x = pos_x;
+  bullet.pos_y = pos_y;
+  bullet.angle = angle;
 
   gettimeofday(&bullet.time_created, NULL);
-  bullet_enqueue(&player->bullet_queue, &bullet);
+  bullet_enqueue(&p->bullet_queue, &bullet);
 
-  if (app.server) { send_enet_host_new_bullet(player, &bullet); } //Broadcast to clients if server
+  //Broadcast to clients if server
+  if (app.server) send_enet_host_new_bullet(p, &bullet);
 }
 
-Player *bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
+Player *bullet_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
   //Check other player collisions
   for (int i = 0; i < app.num_of_players; i++) {
-    if (p->id == app.players[i].id) { continue; } //Ignore self
+    if (p->id == app.players[i].id) continue; //Ignore self
 
     //Create other player rectangle
     uint16_t pos_x_other = app.players[i].pos_x;
@@ -927,7 +965,8 @@ Player *bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_b
     //Create tank rectangle
     SDL_Rect rect_bullet = {*pos_x_bullet, *pos_y_bullet, BULLET_SIZE, BULLET_SIZE};
 
-    if (SDL_HasIntersection(&rect_other, &rect_bullet) == SDL_TRUE) { return &app.players[i]; }
+    if (SDL_HasIntersection(&rect_other, &rect_bullet) == SDL_TRUE)
+      return &app.players[i];
   }
 
   return NULL;
@@ -944,7 +983,7 @@ void update_bullet_positions(Player *p) {
     uint16_t new_pos_yi = new_pos_yf;
 
     //Check if bullet hit a player
-    Player *player_hit = bullet_has_collided(p, &new_pos_xi, &new_pos_yi);
+    Player *player_hit = bullet_collided(p, &new_pos_xi, &new_pos_yi);
     if (player_hit != NULL) {
       if (app.server) { send_enet_host_player_hit(player_hit, p); }
       bullet_dequeue(&p->bullet_queue, &p->bullet_queue.bullets[index]);
@@ -972,10 +1011,11 @@ void drawBullets(Player *player) {
 }
 
 /* Game loop logic */
-int load() {
+uint8_t load() {
   if (app.server) {
     generate_map();
-    if (create_player(&app.players[0], 0, 0, 0) == EXIT_FAILURE) { return EXIT_FAILURE; }
+    uint8_t res = create_player(&app.players[0], 0, 0, 0);
+    if ( res == EXIT_FAILURE) return EXIT_FAILURE;
 
     app.local_player = &app.players[0]; //Create a pointer to the local player
   }
@@ -985,12 +1025,16 @@ int load() {
 
 void update() {
   if (!app.num_of_players) { return; } //Skip if no players
+  int16_t *angle = &(app.local_player->angle);
 
-  if (app.up) { movePlayerForward(app.local_player); };
-  if (app.down) { movePlayerBackward(app.local_player); };
-  if (app.left) { app.local_player->angle = (app.local_player->angle - PLAYER_ROTATION_SPEED) % 360; };
-  if (app.right) { app.local_player->angle = (app.local_player->angle + PLAYER_ROTATION_SPEED) % 360; };
-  if (app.button_a && !app.button_a_is_down) { shoot_bullet(app.local_player, 0, 0, 0); app.button_a_is_down = 1; };
+  if (app.up) movePlayerForward(app.local_player);
+  if (app.down) movePlayerBackward(app.local_player);
+  if (app.left) *angle = (*angle - PLAYER_ROTATION_SPEED) % 360;
+  if (app.right) *angle = (*angle + PLAYER_ROTATION_SPEED) % 360;
+  if (app.button_a && !app.button_a_is_down) {
+    shoot_bullet(app.local_player, 0, 0, 0);
+    app.button_a_is_down = 1;
+  }
 
   for (uint8_t i = 0; i < app.num_of_players; i++) {
     update_bullet_positions(&app.players[i]);
