@@ -310,47 +310,64 @@ int host_or_join(char **argv) {
   }
 }
 
-void poll_enet_server() {
+void handle_host_event_connect() {
+  printf("New client connected from %x:%u.\n",
+    app.event.peer->address.host, app.event.peer->address.port);
+
+  //Assign ID to client CHECK IF DATA GETS FREED AFTER PEER DISCONNECTS!!
+  //ASK ON IRC?
+  app.event.peer->data = malloc(sizeof(uint8_t));
+  memcpy(app.event.peer->data, &app.current_id, sizeof(uint8_t));
+
+  //Create player
+  Player *player = &app.players[app.num_of_players];
+  uint8_t res = create_player(player, app.current_id, 0, 0);
+  if (res == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+
+  host_send_position(app.event.peer); //Send player position to client
+  host_send_map(app.event.peer); //Send map to client
+  host_send_player_joined(); //Broadcast player joined to all
+}
+
+void handle_host_event_receive() {
+  uint8_t *data = (uint8_t *)app.event.packet->data;
+
+  if (data[0] == CLIENT_STATE_FLAG) {
+    uint8_t *player_ID = (uint8_t *)app.event.peer->data;
+    Player *player = get_player_by_id(*player_ID);
+
+    if (data[1]) { movePlayerForward(player); };
+    if (data[2]) { movePlayerBackward(player); };
+    if (data[3]) { player->angle -= PLAYER_ROTATION_SPEED; };
+    if (data[4]) { player->angle += PLAYER_ROTATION_SPEED; };
+    if (data[5] && !player->button_a_is_down) {
+      shoot_bullet(player, 0, 0, 0);
+      player->button_a_is_down = 1;
+    };
+    if (!data[5] && player->button_a_is_down) { player->button_a_is_down = 0; };
+  }
+}
+
+void handle_host_event_disconnect() {
+  printf("Client disconnected from %x:%u.\n",
+    app.event.peer->address.host, app.event.peer->address.port);
+
+  host_send_player_left(app.event.peer->data);
+  uint8_t res = delete_player(app.event.peer->data);
+  if ( res == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+}
+
+void poll_enet_host() {
   while (enet_host_service(app.server, &app.event, 0) > 0) {
     switch (app.event.type) {
       case ENET_EVENT_TYPE_CONNECT:
-        printf("New client connected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
-
-        //Assign ID to client (CHECK IF DATA GETS FREED AFTER PEER DISCONNECTS!! ASK ON IRC?)
-        app.event.peer->data = malloc(sizeof(uint8_t));
-        memcpy(app.event.peer->data, &app.current_id, sizeof(uint8_t));
-
-        //Create player
-        uint8_t player = create_player(&app.players[app.num_of_players], app.current_id, 0, 0);
-        if (player == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-
-        host_send_position(app.event.peer); //Send player position to client
-        host_send_map(app.event.peer); //Send map to client
-        host_send_player_joined(); //Broadcast player joined to all
-
+        handle_host_event_connect();
         break;
       case ENET_EVENT_TYPE_RECEIVE:
-        uint8_t *data = (uint8_t *)app.event.packet->data;
-
-        if (data[0] == CLIENT_STATE_FLAG) {
-          uint8_t *player_ID = (uint8_t *)app.event.peer->data;
-          Player *player = get_player_by_id(*player_ID);
-
-          if (data[1]) { movePlayerForward(player); };
-          if (data[2]) { movePlayerBackward(player); };
-          if (data[3]) { player->angle -= PLAYER_ROTATION_SPEED; };
-          if (data[4]) { player->angle += PLAYER_ROTATION_SPEED; };
-          if (data[5] && !player->button_a_is_down) { shoot_bullet(player, 0, 0, 0); player->button_a_is_down = 1; };
-          if (!data[5] && player->button_a_is_down) { player->button_a_is_down = 0; };
-        }
-
+        handle_host_event_receive();
         break;
       case ENET_EVENT_TYPE_DISCONNECT:
-        printf("Client disconnected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
-
-        host_send_player_left(app.event.peer->data);
-        if (delete_player(app.event.peer->data) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-
+        handle_host_event_disconnect();
         break;
       case ENET_EVENT_TYPE_NONE:
         break;
@@ -358,109 +375,113 @@ void poll_enet_server() {
   }
 }
 
+void handle_client_event_receive() {
+  uint8_t *data = (uint8_t *)app.event.packet->data;
+
+  if (data[0] == HOST_POSITION_FLAG) {
+    uint8_t num_of_players = data[1];
+    int data_index = 2;
+
+    //Create players
+    for (uint8_t i = 0; i < num_of_players; i++) {
+      uint8_t id;
+      uint16_t pos_x;
+      uint16_t pos_y;
+
+      memcpy(&id, &data[data_index], sizeof(uint8_t));
+      data_index += 1;
+      memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+      data_index += 2;
+      memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+      data_index += 2;
+
+      uint8_t res = create_player(&app.players[i], id, pos_x, pos_y);
+      if (res == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+    }
+
+    app.local_player = &app.players[app.num_of_players - 1]; //Last player in app.players is local_player
+    printf("Your id is: %d\n", app.local_player->id);
+  }
+  else if (data[0] == HOST_MAP_FLAG) {
+    int data_index = 1;
+
+    //Copy map data
+    memcpy(&app.map, &data[data_index], MAP_HEIGHT * MAP_WIDTH);
+  }
+  else if (data[0] == HOST_STATE_FLAG) {
+    int data_index = 1;
+
+    for (uint8_t i = 0; i < app.num_of_players; i++) {
+      //Update player positions
+      uint16_t pos_x;
+      uint16_t pos_y;
+      int16_t angle;
+      memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+      data_index += 2;
+      memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+      data_index += 2;
+      memcpy(&angle, &data[data_index], sizeof(int16_t));
+      data_index += 2;
+
+      app.players[i].pos_x = pos_x;
+      app.players[i].pos_y = pos_y;
+      app.players[i].angle = angle;
+    }
+  }
+  else if (data[0] == HOST_PLAYER_JOINED_FLAG) {
+    uint8_t id = data[1];
+    uint8_t data_index = 2;
+    uint16_t pos_x;
+    uint16_t pos_y;
+
+    //When a new player joins they receive a HOST_POSITION_FLAG
+    //packet privately & HOST_PLAYER_JOINED_FLAG packet via broadcast
+    //so they need to ignore the HOST_PLAYER_JOINED_FLAG
+    if (get_player_by_id(id)) return; //Ignore if player with the same id already exists
+
+    memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+    data_index += 2;
+    memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+
+    if (create_player(&app.players[app.num_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+  }
+  else if (data[0] == HOST_PLAYER_LEFT_FLAG) {
+    uint8_t id = data[1];
+    if (delete_player(&id) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
+  }
+  else if (data[0] == HOST_PLAYER_HIT_FLAG) {
+    uint8_t id_hit = data[1];
+    uint8_t id_shooter = data[2];
+
+    printf("Player %d was shot by player %d\n", id_hit, id_shooter);
+  }
+  else if (data[0] == HOST_NEW_BULLET_FLAG) {
+    uint8_t id = data[1];
+    uint8_t data_index = 2;
+    uint16_t pos_x;
+    uint16_t pos_y;
+    int16_t angle;
+
+    if (id == app.local_player->id) return; //Ignore if own bullet
+    Player *player = get_player_by_id(id);
+
+    memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
+    data_index += 2;
+    memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
+    data_index += 2;
+    memcpy(&angle, &data[data_index], sizeof(int16_t));
+
+    shoot_bullet(player, pos_x, pos_y, angle);
+  }
+}
+
 void poll_enet_client() {
   while (enet_host_service(app.client, &app.event, 0) > 0) {
     switch (app.event.type) {
       case ENET_EVENT_TYPE_CONNECT:
-        printf("New client connected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
         break;
       case ENET_EVENT_TYPE_RECEIVE:
-        uint8_t *data = (uint8_t *)app.event.packet->data;
-
-        if (data[0] == HOST_POSITION_FLAG) {
-          uint8_t num_of_players = data[1];
-          int data_index = 2;
-
-          //Create players
-          for (uint8_t i = 0; i < num_of_players; i++) {
-            uint8_t id;
-            uint16_t pos_x;
-            uint16_t pos_y;
-
-            memcpy(&id, &data[data_index], sizeof(uint8_t));
-            data_index += 1;
-            memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
-            data_index += 2;
-            memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
-            data_index += 2;
-
-            if (create_player(&app.players[i], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-          }
-
-          app.local_player = &app.players[app.num_of_players - 1]; //Last player in app.players is local_player
-          printf("Your id is: %d\n", app.local_player->id);
-        }
-        else if (data[0] == HOST_MAP_FLAG) {
-          int data_index = 1;
-
-          //Copy map data
-          memcpy(&app.map, &data[data_index], MAP_HEIGHT * MAP_WIDTH);
-        }
-        else if (data[0] == HOST_STATE_FLAG) {
-          int data_index = 1;
-
-          for (uint8_t i = 0; i < app.num_of_players; i++) {
-            //Update player positions
-            uint16_t pos_x;
-            uint16_t pos_y;
-            int16_t angle;
-            memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
-            data_index += 2;
-            memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
-            data_index += 2;
-            memcpy(&angle, &data[data_index], sizeof(int16_t));
-            data_index += 2;
-
-            app.players[i].pos_x = pos_x;
-            app.players[i].pos_y = pos_y;
-            app.players[i].angle = angle;
-          }
-        }
-        else if (data[0] == HOST_PLAYER_JOINED_FLAG) {
-          uint8_t id = data[1];
-          uint8_t data_index = 2;
-          uint16_t pos_x;
-          uint16_t pos_y;
-
-          //When a new player joins they receive a HOST_POSITION_FLAG
-          //packet privately & HOST_PLAYER_JOINED_FLAG packet via broadcast
-          //so they need to ignore the HOST_PLAYER_JOINED_FLAG
-          if (get_player_by_id(id)) return; //Ignore if player with the same id already exists
-
-          memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
-          data_index += 2;
-          memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
-
-          if (create_player(&app.players[app.num_of_players], id, pos_x, pos_y) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-        }
-        else if (data[0] == HOST_PLAYER_LEFT_FLAG) {
-          uint8_t id = data[1];
-          if (delete_player(&id) == EXIT_FAILURE) { exit(EXIT_FAILURE); }
-        }
-        else if (data[0] == HOST_PLAYER_HIT_FLAG) {
-          uint8_t id_hit = data[1];
-          uint8_t id_shooter = data[2];
-
-          printf("Player %d was shot by player %d\n", id_hit, id_shooter);
-        }
-        else if (data[0] == HOST_NEW_BULLET_FLAG) {
-          uint8_t id = data[1];
-          uint8_t data_index = 2;
-          uint16_t pos_x;
-          uint16_t pos_y;
-          int16_t angle;
-
-          if (id == app.local_player->id) return; //Ignore if own bullet
-          Player *player = get_player_by_id(id);
-
-          memcpy(&pos_x, &data[data_index], sizeof(uint16_t));
-          data_index += 2;
-          memcpy(&pos_y, &data[data_index], sizeof(uint16_t));
-          data_index += 2;
-          memcpy(&angle, &data[data_index], sizeof(int16_t));
-
-          shoot_bullet(player, pos_x, pos_y, angle);
-        }
+        handle_client_event_receive();
         break;
       case ENET_EVENT_TYPE_DISCONNECT:
         printf("Client disconnected from %x:%u.\n", app.event.peer->address.host, app.event.peer->address.port);
@@ -472,11 +493,11 @@ void poll_enet_client() {
 }
 
 void poll_enet() {
-  if (app.server) { poll_enet_server(); }
+  if (app.server) { poll_enet_host(); }
   else if (app.client) { poll_enet_client(); }
 }
 
-void send_enet_server() {
+void send_enet_host() {
   /* PACKET STRUCTURE */
   /*       |----------------*number of players----------------|
   -------------------------------------------------------------
@@ -511,7 +532,7 @@ void send_enet_server() {
   free(data);
 }
 
-void send_enet_server_new_bullet(Player *player, Bullet *bullet) {
+void send_enet_host_new_bullet(Player *player, Bullet *bullet) {
   /* PACKET STRUCTURE
   ----------------------------------------------------------------------
   |  flag  |  p_id  |     pos_x      |     pos_y      |     angle      |
@@ -544,7 +565,7 @@ void send_enet_server_new_bullet(Player *player, Bullet *bullet) {
   free(data);
 }
 
-void send_enet_server_player_hit(Player *p_hit, Player *p_shooter) {
+void send_enet_host_player_hit(Player *p_hit, Player *p_shooter) {
   /* PACKET STRUCTURE
   ----------------------------
   |  flag  |p_hit_id|p_sht_id|
@@ -593,7 +614,7 @@ void send_enet_client() {
 }
 
 void send_enet() {
-  if (app.server) { send_enet_server(); }
+  if (app.server) { send_enet_host(); }
   else if (app.client) { send_enet_client(); }
 }
 
@@ -890,7 +911,7 @@ void shoot_bullet(Player *player, uint16_t pos_x, uint16_t pos_y, int16_t angle)
   gettimeofday(&bullet.time_created, NULL);
   bullet_enqueue(&player->bullet_queue, &bullet);
 
-  if (app.server) { send_enet_server_new_bullet(player, &bullet); } //Broadcast to clients if server
+  if (app.server) { send_enet_host_new_bullet(player, &bullet); } //Broadcast to clients if server
 }
 
 Player *bullet_has_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
@@ -925,7 +946,7 @@ void update_bullet_positions(Player *p) {
     //Check if bullet hit a player
     Player *player_hit = bullet_has_collided(p, &new_pos_xi, &new_pos_yi);
     if (player_hit != NULL) {
-      if (app.server) { send_enet_server_player_hit(player_hit, p); }
+      if (app.server) { send_enet_host_player_hit(player_hit, p); }
       bullet_dequeue(&p->bullet_queue, &p->bullet_queue.bullets[index]);
     }
 
