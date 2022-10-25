@@ -972,6 +972,55 @@ Player *bullet_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bulle
   return NULL;
 }
 
+void bullet_bounce(Bullet *b, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
+  //Check map collisions
+  for (int i = 0; i < MAP_HEIGHT; i++) {
+    for (int j = 0; j < MAP_WIDTH; j++) {
+      if (app.map[i][j] == 0) { continue; }
+
+      //Create wall rectangle
+      uint16_t pos_x_wall = j * TILE_SIZE;
+      uint16_t pos_y_wall = i * TILE_SIZE;
+      SDL_Rect rect_wall = {pos_x_wall, pos_y_wall, TILE_SIZE, TILE_SIZE};
+
+      //Create bullet rectangle
+      SDL_Rect rect_bullet = {*pos_x_bullet, *pos_y_bullet, BULLET_SIZE, BULLET_SIZE};
+
+      if (SDL_HasIntersection(&rect_wall, &rect_bullet) == SDL_TRUE) {
+        uint16_t rect_bullet_x_mid = rect_bullet.x + rect_bullet.w / 2;
+        uint16_t rect_wall_x_mid = rect_wall.x + rect_wall.w / 2;
+        uint16_t rect_bullet_y_mid = rect_bullet.y + rect_bullet.h / 2;
+        uint16_t rect_wall_y_mid = rect_wall.y + rect_wall.h / 2;
+
+        if (rect_bullet_y_mid > rect_wall.y && rect_bullet_y_mid < rect_wall.y + rect_wall.h) {
+          printf("1\n");
+          //Bounce right
+          int x = 360 - b->angle;
+          b->angle = x;
+        }
+        //if (rect_bullet_x_mid > rect_wall_x_mid && rect_bullet_y_mid > rect_wall.y && rect_bullet_y_mid < rect_wall.y + rect_wall.h) {
+        //  printf("2\n");
+        //  //Bounce right
+        //  int x = 360 - b->angle;
+        //  b->angle = x;
+        //}
+        if (rect_bullet_x_mid > rect_wall.x && rect_bullet_x_mid < rect_wall.x + rect_wall.w) {
+          printf("3\n");
+          int x = 180 - b->angle;
+          b->angle = x;
+          //Bounce up
+        }
+        //if (rect_bullet_y_mid < rect_wall_y_mid && rect_bullet_x_mid > rect_wall.x && rect_bullet_x_mid < rect_wall.x + rect_wall.w) {
+        //  printf("4\n");
+        //  int x = 180 - b->angle;
+        //  b->angle = x;
+        //  //Bounce down
+        //}
+      }
+    }
+  }
+}
+
 void update_bullet_positions(Player *p) {
   for (int i = 0; i < p->bullet_queue.size; i++) {
     int index = (p->bullet_queue.front + i) % BULLET_AMOUNT;
@@ -982,9 +1031,12 @@ void update_bullet_positions(Player *p) {
     uint16_t new_pos_xi = new_pos_xf;
     uint16_t new_pos_yi = new_pos_yf;
 
+    //Check if bullet bounced off a wall
+    bullet_bounce(&p->bullet_queue.bullets[index], &new_pos_xi, &new_pos_yi);
+
     //Check if bullet hit a player
     Player *player_hit = bullet_collided(p, &new_pos_xi, &new_pos_yi);
-    if (player_hit != NULL) {
+    if (player_hit) {
       if (app.server) { send_enet_host_player_hit(player_hit, p); }
       bullet_dequeue(&p->bullet_queue, &p->bullet_queue.bullets[index]);
     }
@@ -1015,7 +1067,7 @@ uint8_t load() {
   if (app.server) {
     generate_map();
     uint8_t res = create_player(&app.players[0], 0, 0, 0);
-    if ( res == EXIT_FAILURE) return EXIT_FAILURE;
+    if (res == EXIT_FAILURE) return EXIT_FAILURE;
 
     app.local_player = &app.players[0]; //Create a pointer to the local player
   }
@@ -1063,11 +1115,11 @@ void draw() {
 int main(int argc, char **argv) {
   app.is_running = 1;
   atexit(cleanup); //Assign a cleanup function
-  if (init_SDL() == EXIT_FAILURE) { return -1; } //Initialize SDL
-  if (init_enet() == EXIT_FAILURE) { return -1; } //Initialize ENet
+  if (init_SDL() == EXIT_FAILURE) return EXIT_FAILURE; //Initialize SDL
+  if (init_enet() == EXIT_FAILURE) return EXIT_FAILURE; //Initialize ENet
 
-  if (host_or_join(argv) == EXIT_FAILURE) { return -1; } //Host or join
-  if (load() == EXIT_FAILURE) { return -1; }; //Load state
+  if (host_or_join(argv) == EXIT_FAILURE) return EXIT_FAILURE; //Host or join
+  if (load() == EXIT_FAILURE) return EXIT_FAILURE; //Load state
 
 
   while (app.is_running) {
