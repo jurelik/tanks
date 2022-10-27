@@ -739,6 +739,10 @@ void generate_map() {
  app.map[8][5] = 1;
  app.map[8][6] = 1;
  app.map[8][7] = 1;
+ app.map[9][5] = 1;
+ app.map[10][5] = 1;
+ app.map[11][5] = 1;
+ app.map[12][5] = 1;
 }
 
 void draw_map() {
@@ -972,7 +976,7 @@ Player *bullet_collided(Player *p, uint16_t *pos_x_bullet, uint16_t *pos_y_bulle
   return NULL;
 }
 
-void bullet_bounce(Bullet *b, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
+void bullet_bounce(Bullet *b, float *pos_x_bullet, float *pos_y_bullet) {
   //Check map collisions
   for (int i = 0; i < MAP_HEIGHT; i++) {
     for (int j = 0; j < MAP_WIDTH; j++) {
@@ -984,37 +988,64 @@ void bullet_bounce(Bullet *b, uint16_t *pos_x_bullet, uint16_t *pos_y_bullet) {
       SDL_Rect rect_wall = {pos_x_wall, pos_y_wall, TILE_SIZE, TILE_SIZE};
 
       //Create bullet rectangle
-      SDL_Rect rect_bullet = {*pos_x_bullet, *pos_y_bullet, BULLET_SIZE, BULLET_SIZE};
+      uint16_t pos_x_bullet_int = *pos_x_bullet;
+      uint16_t pos_y_bullet_int = *pos_y_bullet;
+      SDL_Rect rect_bullet = {pos_x_bullet_int, pos_y_bullet_int, BULLET_SIZE, BULLET_SIZE};
 
       if (SDL_HasIntersection(&rect_wall, &rect_bullet) == SDL_TRUE) {
-        uint16_t rect_bullet_x_mid = rect_bullet.x + rect_bullet.w / 2;
-        uint16_t rect_wall_x_mid = rect_wall.x + rect_wall.w / 2;
-        uint16_t rect_bullet_y_mid = rect_bullet.y + rect_bullet.h / 2;
-        uint16_t rect_wall_y_mid = rect_wall.y + rect_wall.h / 2;
+        uint16_t new_angle = 360 - b->angle;
+        float new_pos_xf = *pos_x_bullet + sin(new_angle * PI/180) * BULLET_SPEED;
+        float new_pos_yf = *pos_y_bullet - cos(new_angle * PI/180) * BULLET_SPEED;
+        uint16_t new_pos_xi = new_pos_xf;
+        uint16_t new_pos_yi = new_pos_yf;
 
-        if (rect_bullet_y_mid > rect_wall.y && rect_bullet_y_mid < rect_wall.y + rect_wall.h) {
-          printf("1\n");
-          //Bounce right
-          int x = 360 - b->angle;
-          b->angle = x;
+        //Create new bullet rectangle
+        SDL_Rect new_rect_bullet = {new_pos_xi, new_pos_yi, BULLET_SIZE, BULLET_SIZE};
+        if (SDL_HasIntersection(&rect_wall, &new_rect_bullet) == SDL_TRUE) {
+          //Check if there is a collision with a block to the bottom
+          if (i + 1 < MAP_HEIGHT && app.map[i + 1][j] == 1) {
+            uint16_t pos_x_wall_bottom = j * TILE_SIZE;
+            uint16_t pos_y_wall_bottom = (i + 1) * TILE_SIZE;
+            SDL_Rect rect_wall_bottom = {pos_x_wall_bottom, pos_y_wall_bottom, TILE_SIZE, TILE_SIZE};
+
+            if (SDL_HasIntersection(&rect_wall_bottom, &new_rect_bullet) == SDL_TRUE) {
+              b->angle = 360 - b->angle;
+            }
+          }
+          else {
+            b->angle = 180 - b->angle;
+          }
         }
-        //if (rect_bullet_x_mid > rect_wall_x_mid && rect_bullet_y_mid > rect_wall.y && rect_bullet_y_mid < rect_wall.y + rect_wall.h) {
-        //  printf("2\n");
-        //  //Bounce right
-        //  int x = 360 - b->angle;
-        //  b->angle = x;
+        else {
+          //Check if there is a collision with a block to the right
+          if (j + 1 < MAP_WIDTH && app.map[i][j + 1] == 1) {
+            uint16_t pos_x_wall_right = (j + 1) * TILE_SIZE;
+            uint16_t pos_y_wall_right = i * TILE_SIZE;
+            SDL_Rect rect_wall_right = {pos_x_wall_right, pos_y_wall_right, TILE_SIZE, TILE_SIZE};
+
+            if (SDL_HasIntersection(&rect_wall_right, &new_rect_bullet) == SDL_TRUE) {
+              b->angle = 180 - b->angle;
+            }
+          }
+          else {
+            b->angle = 360 - b->angle;
+          }
+        }
+
+        return;
+
+        //uint16_t bullet_x_mid = rect_bullet.x + rect_bullet.w / 2;
+        //uint16_t bullet_y_mid = rect_bullet.y + rect_bullet.h / 2;
+        //uint16_t wall_x_right = rect_wall.x + rect_wall.w;
+        //uint16_t wall_y_down = rect_wall.y + rect_wall.h;
+
+        //if (bullet_y_mid >= rect_wall.y && bullet_y_mid <= wall_y_down) {
+        //  printf("bounced on x!\n");
+        //  b->angle = 360 - b->angle; //Bounce on x plane
         //}
-        if (rect_bullet_x_mid > rect_wall.x && rect_bullet_x_mid < rect_wall.x + rect_wall.w) {
-          printf("3\n");
-          int x = 180 - b->angle;
-          b->angle = x;
-          //Bounce up
-        }
-        //if (rect_bullet_y_mid < rect_wall_y_mid && rect_bullet_x_mid > rect_wall.x && rect_bullet_x_mid < rect_wall.x + rect_wall.w) {
-        //  printf("4\n");
-        //  int x = 180 - b->angle;
-        //  b->angle = x;
-        //  //Bounce down
+        //if (bullet_x_mid >= rect_wall.x && bullet_x_mid <= wall_x_right) {
+        //  printf("bounced on y!\n");
+        //  b->angle = 180 - b->angle; //Bounce on y plane
         //}
       }
     }
@@ -1032,7 +1063,7 @@ void update_bullet_positions(Player *p) {
     uint16_t new_pos_yi = new_pos_yf;
 
     //Check if bullet bounced off a wall
-    bullet_bounce(&p->bullet_queue.bullets[index], &new_pos_xi, &new_pos_yi);
+    bullet_bounce(&p->bullet_queue.bullets[index], &new_pos_xf, &new_pos_yf);
 
     //Check if bullet hit a player
     Player *player_hit = bullet_collided(p, &new_pos_xi, &new_pos_yi);
