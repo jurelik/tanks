@@ -64,6 +64,7 @@ typedef struct {
   ENetHost *client;
   ENetEvent event;
   ENetPeer *peer;
+  char *ip_address;
   int enet_initialized;
   uint8_t map[MAP_HEIGHT][MAP_WIDTH];
   Player *local_player;
@@ -129,7 +130,7 @@ int init_enet() {
 }
 
 int init_server() {
-  enet_address_set_host(&app.address, "127.0.0.1");
+  enet_address_set_host(&app.address, app.ip_address);
   app.address.port = 1234;
 
   app.server = enet_host_create(&app.address, 16, 1, 0, 0);
@@ -143,7 +144,7 @@ int init_server() {
 }
 
 int init_client() {
-  enet_address_set_host(&app.address, "127.0.0.1");
+  enet_address_set_host(&app.address, app.ip_address);
   app.address.port = 1234;
 
   app.client = enet_host_create(NULL, 1, 1, 0, 0);
@@ -299,13 +300,31 @@ int host_or_join(char **argv) {
     return EXIT_FAILURE;
   }
 
-  if (strcmp(argv[1], "host") == 0) { return init_server(); }
+  if (strcmp(argv[1], "host") == 0) {
+    if (!argv[2]) { app.ip_address = "127.0.0.1"; }
+    else if (strcmp(argv[2], "local") == 0) { app.ip_address = "127.0.0.1"; }
+    else if (strcmp(argv[2], "online") == 0) {
+      if (!argv[3]) {
+        fprintf(stderr, "Use the following format: %s < host <local | online <ip> > | join >", argv[0]);
+        return EXIT_FAILURE;
+      }
+      app.ip_address = argv[3];
+    }
+    else {
+      fprintf(stderr, "Use the following format: %s < host <local | online <ip> > | join >", argv[0]);
+      return EXIT_FAILURE;
+    }
+    return init_server();
+  }
   else if (strcmp(argv[1], "join") == 0) {
+    if (!argv[2]) { app.ip_address = "127.0.0.1"; }
+    else { app.ip_address = argv[2]; }
+
     if (init_client() == EXIT_FAILURE) { return EXIT_FAILURE; }
     return connect_to_host();
   }
   else {
-    fprintf(stderr, "Use the following format: %s < host | join >", argv[0]);
+    fprintf(stderr, "Use the following format: %s < host <local | online <ip> > | join >", argv[0]);
     return EXIT_FAILURE;
   }
 }
