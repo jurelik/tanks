@@ -110,7 +110,8 @@ App app = {0};
 void cleanup() {
   if (app.window) SDL_DestroyWindow(app.window);
   if (app.renderer) SDL_DestroyRenderer(app.renderer);
-  if (app.local_player->texture) SDL_DestroyTexture(app.local_player->texture);
+  if (app.local_player && app.local_player->texture)
+    SDL_DestroyTexture(app.local_player->texture);
   if (app.server) enet_host_destroy(app.server);
   if (app.client) enet_host_destroy(app.client);
   if (app.enet_initialized) enet_deinitialize();
@@ -131,7 +132,7 @@ int init_enet() {
 
 int init_server() {
   enet_address_set_host(&app.address, app.ip_address);
-  app.address.port = 1234;
+  app.address.port = 25565;
 
   app.server = enet_host_create(&app.address, 16, 1, 0, 0);
   if (app.server == NULL) {
@@ -145,7 +146,7 @@ int init_server() {
 
 int init_client() {
   enet_address_set_host(&app.address, app.ip_address);
-  app.address.port = 1234;
+  app.address.port = 25565;
 
   app.client = enet_host_create(NULL, 1, 1, 0, 0);
   if (app.client == NULL) {
@@ -295,8 +296,10 @@ int connect_to_host() {
 }
 
 int host_or_join(char **argv) {
+  char *err_msg = "Use the following format:\n"
+                  "%s < host <local | online <ip> > | join >\n";
   if (!argv[1]) {
-    fprintf(stderr, "Use the following format: %s < host | join >\n", argv[0]);
+    fprintf(stderr, err_msg, argv[0]);
     return EXIT_FAILURE;
   }
 
@@ -305,13 +308,13 @@ int host_or_join(char **argv) {
     else if (strcmp(argv[2], "local") == 0) { app.ip_address = "127.0.0.1"; }
     else if (strcmp(argv[2], "online") == 0) {
       if (!argv[3]) {
-        fprintf(stderr, "Use the following format: %s < host <local | online <ip> > | join >", argv[0]);
+        fprintf(stderr, err_msg, argv[0]);
         return EXIT_FAILURE;
       }
       app.ip_address = argv[3];
     }
     else {
-      fprintf(stderr, "Use the following format: %s < host <local | online <ip> > | join >", argv[0]);
+      fprintf(stderr, err_msg, argv[0]);
       return EXIT_FAILURE;
     }
     return init_server();
@@ -324,7 +327,7 @@ int host_or_join(char **argv) {
     return connect_to_host();
   }
   else {
-    fprintf(stderr, "Use the following format: %s < host <local | online <ip> > | join >", argv[0]);
+    fprintf(stderr, err_msg, argv[0]);
     return EXIT_FAILURE;
   }
 }
